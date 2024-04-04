@@ -168,9 +168,8 @@ species household schedules:[] {
 	 * How household evaluates price criteria to choose a mode
 	 */
 	float _price_eval(mode m, district o, float preference) {
-		return o.c.mayor.price_factor(m) * 
-			(1 - MOBCOST[INCOME_LEVEL index_of incomes , int(m)]/budget) * (preference+1);
-		
+		return (preference+1) / o.c.mayor.price_factor(m) * 
+			(1 - MOBCOST[INCOME_LEVEL index_of incomes , int(m)]/budget);
 	}
 	
 	// Based on data gives a score for a mode on a given distance
@@ -259,7 +258,7 @@ species household schedules:[] {
 	
 	/**
 	 * Evoluation of habits : should be subject to bias
-	 * Triggered by district after mode_choice
+	 * Triggered each time a OD mode choice is made by the household
 	 */
 	action update_habits(district origin, district destination, map<mode,float> behavior, float rate <- RATE_EVO_HABITS) {
 		
@@ -272,22 +271,46 @@ species household schedules:[] {
 		float adjusum <- sum(adjusted_behavior.values);
 		adjusted_behavior <- mode as_map (each::adjusted_behavior[each]/adjusum);
 		
+		map<mode,pair<float,float>> modechange;
 		loop m over:adjusted_behavior.keys {
-			trip_habits[m][{int(origin),int(destination)}] <- adjusted_behavior[m] * rate + trip_habits[m][{int(origin),int(destination)}] * (1 - rate); 
+			// store old habits on mode m
+			float old_habit <- trip_habits[m][{int(origin),int(destination)}]; 
+			trip_habits[m][{int(origin),int(destination)}] <- adjusted_behavior[m] * rate + trip_habits[m][{int(origin),int(destination)}] * (1 - rate);
+			// store old::new
+			modechange[m] <- old_habit::trip_habits[m][{int(origin),int(destination)}];  
 		}
+		
+		ask origin.c.mayor {do allow_subsidies_to(myself,origin,modechange);}
 	}
 	
 	/**
 	 * Represent the contribution to a sub-population of this type of household
 	 * to change mode ownership (i.e. sell/buy cars, bikes and public transport pass)
 	 */
-	action update_modpotential(float rate, map<mode,float> potential) {
-		map<mode,float> newpotential;
-		loop m over:mode {
-			newpotential[m] <- mod_potential[m] * (1 - rate) + potential[m]/sum(potential.values) * rate;	  
+	action update_modpotential(district d, float rate <- MODE_POTENTIAL_INERTIA) {
+		float localpotential <- d.pop[self]/__population;
+		// GOTO CAR
+		float carhabits <- mean(trip_habits[CAR]); // habits
+		float carestriction <- d.c.mayor.__restricted_cars[incomes]; // restriction
+		// TODO : unsatisfaction
+		if  carestriction > 0 and flip(1-carhabits) {
+			float newpotential <- mod_potential[CAR] * MODE_POTENTIAL_INERTIA + (mod_potential[CAR]-carestriction) * (1-MODE_POTENTIAL_INERTIA);
+			mod_potential[CAR] <- (1-localpotential) * mod_potential[CAR] + newpotential * localpotential;  
 		}
-		if newpotential.values one_matches (each > 1) { error "Potential cannot be >1 "+newpotential.values; }
-		mod_potential <- newpotential;
+		// GOTO BIKE
+		float bikehabits <- mean(trip_habits[BIKE]);
+		if d.c.mayor.__bike_subsidies > 0.0 and mod_potential[BIKE] < bikehabits { 
+			float newpotential <- mod_potential[BIKE] * MODE_POTENTIAL_INERTIA + bikehabits * (1-MODE_POTENTIAL_INERTIA);
+			mod_potential[BIKE] <- (1-localpotential) * mod_potential[BIKE] + newpotential * localpotential;  
+		}
+		// TODO : GOTO PT = Safety ???
+	}
+	
+	/**
+	 * Based on strenght of habits, how probable a reevaluation of mobility choices should be done by this type of household
+	 */
+	bool reevaluate_mobility_behavior(float ceiling <- MOBILITY_BEHAVIOR_INERTIA) { 
+		return flip(1-(MOBILITY_BEHAVIOR_INERTIA+max(trip_habits collect mean(each)))/2);
 	}
 	
 }

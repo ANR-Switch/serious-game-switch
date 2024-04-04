@@ -8,7 +8,8 @@
 
 model Player
 
-import "../Model/Modes.gaml"
+import "Modes.gaml"
+import "Publicworks.gaml"
 
 global {
 	
@@ -62,91 +63,88 @@ species mayor {
 	
 	// The budget is made of credit (units) that represent a "token-of-action"
 	// Renew of budget is based on recurrent costs and incomes from taxes
-	float budget <- STARTING_BUDGET;
+	float budget <- float(STARTING_BUDGET);
 	
 	// TAXES
 	float __taxe_fuel <- 1.0 min:0.0 max:__MAXTF; float __MAXTF <- 2.0;
 	float __parc_price <- 1.0 min:0.0 max:__MAXPP; float __MAXPP <- 2.0; 
 	float __bus_price <- 1.0 min:0.0 max:__MAXBP; float __MAXBP <- 2.0;
 	
-	float __local_taxe <- 1.0 min:0.0 max:2.0; // Adjustement criteria for budget equilibrium
+	float __local_taxe <- 1.0 min:0.0 max:__MAXLT; float __MAXLT <- 2.0;// Adjustement criteria for budget equilibrium
 	
 	// INCITATIONS
 	float __bike_subsidies <- 0.0 min:0.0 max:1.0;
-	float __bs_prop <- 0.1;
+	float __accorded_bike_subsidies;
 	float __ev_subsidies <- 0.0 min:0.0 max:1.0;
-	float __evs_prop <- 0.25;  
-	float __old_cars_exclusion <- 0.0 min:0.0 max:1.0;
+	float __accorded_ev_subsidies;
 	
 	// INVESTMENT
-	int __invest;
+	float __invest;
 	
 	// CITY MODES POLICY
 	map<mode,map<string,float>> __city_modes_policy; // TODO : init based on households preferences
+	map<string,float> __restricted_cars <- INCOME_LEVEL as_map (each::0.0);
+	float __pt_boost <- 1.0;
 	
 	// **************
 	// PLAYER ACTIONS
 	// **************
 	
-	// Start / stop subsidies for EV or eBike and old cars hindrance
-	action subsidies(mode m, float amount, bool startstop <- true) {
-		switch m {
-			match CAR {
-				if amount > 0 { // EV subsidies
-					if !startstop { __ev_subsidies <- 0.0; }
-					else { __ev_subsidies <- amount;}
-				} else { // Forbid older cars
-					if !startstop { __old_cars_exclusion <- 0.0; }
-					else { __old_cars_exclusion <- amount; }
-				}
-			}
-			match BIKE { // eBike subsidies
-				if !startstop { __bike_subsidies <- 0.0; }
-				else { __bike_subsidies <- amount; }
-			}
-		}
-	}
-	
 	// Launches work on infrastructure 
-	publicwork invest_equipement(mode m, district o, district d, float amount) {
+	publicwork invest_equipement(mode mheu, district o, district d, float amount) {
 	
-		create publicwork with:[
-			m::m.name,c::mycity,amount::amount,
+		create infrapw with:[
+			m::mheu,c::mycity,amount::amount,
 			target::o=nil or d=nil ? PUBLICWORK_NOTARGET : {int(o),int(d)}
 		];
 		
-		return last(publicwork);
+		return last(infrapw);
 	}
 	
-	// ============================
-	// TODO : Add budget costs for the 4 next actions
-	
-	
-	action buildcarpark(district d, int amount) {
-		d.parcapacity <- max(1, d.parcapacity + amount);
+	/*
+	 * Launches work on carpaks
+	 * costs: ±8k / place modulo le prix de l'immo
+	 */
+	publicwork manage_carpark(district d, int amount) {
+		
+		create carparkpw with:[
+			m::CAR,c::mycity,target::{int(d),-1},evol::amount
+		];
+		
+		return last(carparkpw); 
 	}
 	
 	// Reduce speed limit, i.e. add a multiplicative factor lower than 1 to the criteria TIME on CAR
-	action lowerspeedlimit {
-		__city_modes_policy[CAR][TIME] <- __city_modes_policy[CAR][TIME] * 0.8; // équivaut au fait de passer de 50 à 40 TODO : explicit? 
+	action lowerspeedlimit(int speedlimit) {
+		__city_modes_policy[CAR][TIME] <- SPEED_FACTOR * speedlimit/BASE_SPEED_LIMIT + (1-SPEED_FACTOR); // équivaut au fait de passer de 50 à 40 TODO : explicit?
+		// TODO : put a price on it !!!
+		mycity._CAROAD <- mycity._CAROAD collect (max(0,min(1,each * __city_modes_policy[CAR][TIME]))) as_matrix {length(district),length(district)};  
 	}
 	
 	// TODO : how to parametrize? if we just change potential, it means people are using other modes, which is not realistic at all
-	action forbidoldcar {
-		// TODO : Reduce potential
+	action forbidoldcar(int critair <- 2) {
+		float level <- critair<=2?ZFE_CRIT2:ZFE_CRIT3;
+		loop income over:INCOME_LEVEL { __restricted_cars[income] <- (level + ZFE_X_ECONOMY[income])/2; }
 	}
 	
 	// more PT stops, increased freq. and passengers capacity/confort
-	action increasePTatractivness(float confort <- 0.0, float morefreq <- 0.0, float morestops <- 0.0) {
+	action increasePTatractivness(float confort <- 0.0, float morefreq <- 0.0) {
 		// passengers capacity/confort : increase directly confort criteria on PT
 		__city_modes_policy[PUBLICTRANSPORT][CONFORT] <- __city_modes_policy[PUBLICTRANSPORT][CONFORT]+confort;
 		// increase frequency or number of bus stops : increase fiability / time / ease criteria
-		// TODO : does it increase SAFE?
-		loop i over:[morefreq,morestops] {
-			loop c over:[TIME,EASY] {
-				__city_modes_policy[PUBLICTRANSPORT][c] <- __city_modes_policy[PUBLICTRANSPORT][c]+i;
-			}
+		loop c over:[TIME,EASY] {
+			__city_modes_policy[PUBLICTRANSPORT][c] <- __city_modes_policy[PUBLICTRANSPORT][c]+morefreq;
 		}
+		__pt_boost <- __pt_boost + confort + morefreq;
+	}
+	
+	// Household 
+	action allow_subsidies_to(household hh, district d, map<mode,pair<float,float>> switches) {
+		float bikediff <- switches[BIKE].value - switches[BIKE].key;
+		if __bike_subsidies > 0 and bikediff > 0 { 
+			__accorded_bike_subsidies <- __accorded_bike_subsidies + d.pop[hh]/mycity.total_population() * bikediff;
+		}
+		if __ev_subsidies > 0 {} // TODO : dev subsidies toward EV
 	}
 	
 	// TODO : promote ecology???
@@ -168,39 +166,38 @@ species mayor {
 		float carbalance <- __get_taxes_coefficient(CAR);
 		float publictransportbalance <- __get_taxes_coefficient(PUBLICTRANSPORT);
 		
-		float __car_input <- carbalance * STARTING_BUDGET * FUEL_TAXE_RATIO_BALANCE * step / #year;
-		float __pt_input <- publictransportbalance * STARTING_BUDGET * PT_TAXE_RATIO_BALANCE * PT_PAYMENT_RATIO;
-		float __local_tax <- __local_taxe * STARTING_BUDGET * LOCAL_TAXE_RATIO_BALANCE * step / #year;
+		float __car_input <- carbalance * STARTING_BUDGET * FUEL_TAXE_RATIO_BALANCE * #day / #year;
+		float __pt_input <- publictransportbalance * STARTING_BUDGET * PT_TAXE_RATIO_BALANCE * PT_PAYMENT_RATIO * #day / #year;
+		float __local_tax <- __local_taxe * STARTING_BUDGET * LOCAL_TAXE_RATIO_BALANCE * #day / #year;
+		
+		// write "CARS IN: "+__car_input;
+		// write "PT IN: "+__pt_input;
+		// write "LOCAL TAXE IN: "+__local_tax;
 		
 		// SUBSIDIES
-		// TODO : make the bike subvention active, when people switch toward this mode
-		// __invest <- round(__invest + STARTING_BUDGET * __bike_subsidies);
+		// Pay over a year subsidies when household switch toward more bike in mobility
+		if __accorded_bike_subsidies > 0 {
+			__accorded_bike_subsidies <- __accorded_bike_subsidies - __accorded_bike_subsidies * #day/#year; // Reduce the amount of people asking for subsidies
+			__invest <- __invest + __accorded_bike_subsidies * __bike_subsidies * STARTING_BUDGET * #day/#year; // Add the amount of subsidies corresponding to the investment for this round
+		}
+		
+		// write "SUBSIDIES COST: "+__invest; float ii <- __invest;
 		
 		// PUBLIC WORKS
 		__invest <- __invest + sum(
-			mycity.publicworks collect (each.costs() / each.duration() // actual costs per year 
+			mycity.publicworks collect (each.costs() / (each.duration()/#year) // actual costs per year 
 				/ world.__actual_base_annual_budget(mycity) // per unit of actual yearly budget
-				* step / #year // per step of simulation
+				* STARTING_BUDGET
+				* #day / #year // per step of simulation
 			)
 		);
 		
-		// budget has 4 main sources:
-		// >> 7% taxe on fuel modulo usage/infrastructure dimension
-		// >> 3/5% public transport pricing
-		// >> ±50% taxe local (habitation, etc.)
-		// >> expense of investment
+		// write "PUBLIC WORK COST: "+(__invest-ii);
+		
 		budget <- budget + __car_input + __pt_input + __local_tax - __invest;
 		
 		// RESET INVESTMENT
-		__invest <- 0; 
-		
-//		write sample(__local_taxe);
-//		write sample(carbalance);
-//		write sample(__car_input);
-//		write sample(publictransportbalance);
-//		write sample(__pt_input);
-//		write sample(__local_tax);
-//		write sample(bikebalance);
+		__invest <- 0.0; 
 		
 	}
 	
@@ -212,12 +209,14 @@ species mayor {
 	 * from /2 to x2 factor (i.e. [0.5;2.0]
 	 */
 	float price_factor(mode m) { 
-		switch m { 
+		switch m {
+			// fuel tax and parcking pricing 
 			match CAR {
 				float mid <- (__taxe_fuel + __parc_price) / 2; 
 				return mid < 1 ? mid/2+0.5 : mid;
-			} // fuel tax and parcking pricing
-			match BIKE {return 1 - __bike_subsidies;} // subvention or not
+			} 
+			// Bike subsidies
+			match BIKE { return 1 - __bike_subsidies; } 
 			match PUBLICTRANSPORT {return __bus_price<1 ? __bus_price/2+0.5 : __bus_price;} // public transport pricing 
 		}
 	}

@@ -36,6 +36,10 @@ global {
 		
 		ask sb {do MODES_BUILDER();}
 		
+		// Create player agent
+		ask sb {do INIT_MAYOR(thecity);}
+		write "You are the mayor !";
+		
 		// Create households
 		ask sb {do POP_SYNTH(thecity);}
 		write "Population has been initialized";
@@ -46,10 +50,6 @@ global {
 			if thecity._MODE[m] one_matches (each < 0) {error "one mode has negative number of trips";}
 			write "\t"+m.name+" trips: "+sum(thecity._MODE[m]);
 		}
-		
-		// Create player agent
-		ask sb {do INIT_MAYOR(thecity);}
-		write "You are the mayor !";
 		
 		// TODO move to the UI builder
 		ask sb {do INIT_UI();}

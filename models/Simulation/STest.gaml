@@ -15,22 +15,37 @@ global {
 	
 	// PARAMETERS
 	
+	// taxes
 	float FT;
 	float PTT;
 	float PP;
 	float LT;
 	
-	bool BS;
+	// Launch subsidies for ebikes (or second life, maintenance, etc.)
+	bool BS; // on_change:{ ask mayor {__bike_subsidies <- BS ? BSA : 0.0;} };
+	float BSA;
+	// Launch subsidies for ecars
+	// TODO : up
 	bool EV;
+	float EVA;
+	// Speed limit
+	int SL;
 	
+	// Public transport services
+	float PTC;
+	float PTF;
+	
+	// Update policy of player based on parameters
 	reflex __update_params {
 		ask thecity.mayor {
-			__taxe_fuel <- max(0, min(2.0, FT));
-			__bus_price <- max(0, min(2.0, PTT));
-			__parc_price <- max(0, min(2.0, PP));
-			__local_taxe <- max(0, min(2.0, LT));
-			__bike_subsidies <- BS ? 0.1 : 0.0;
-			// __ev_subvention <- EV ? 0.5 : 0.0;
+			__taxe_fuel <- max(0, min(__MAXTF, FT));
+			__bus_price <- max(0, min(__MAXBP, PTT));
+			__parc_price <- max(0, min(__MAXPP, PP));
+			__local_taxe <- max(0, min(__MAXLT, LT));
+			__bike_subsidies <- BS ? BSA : 0.0;
+			__ev_subsidies <- EV ? EVA : 0.0;
+			if SL!=BASE_SPEED_LIMIT {do lowerspeedlimit(SL); BASE_SPEED_LIMIT <- SL;}
+			do increasePTatractivness(PTC,PTF);
 		}
 	}
 	
@@ -41,6 +56,9 @@ global {
 	string DT;
 	bool overall <- false;
 	float amount;
+	
+	string CPT;
+	int nbcarparks <- 0;
 	
 	list<string> _districts <- [CBD] + range(nb_mixed_district-1) collect (MD+" "+(each+1))
 										+ range(nb_residential_district-1) collect (RD+" "+(each+1)) const:true;
@@ -90,6 +108,7 @@ global {
 		return res;
 	}
 	
+	// UTILS : Display revealed preferences
 	map<string, map<string,float>> spider_criteria update:critxhousehold();
 	
 	map<string, map<string,float>> critxhousehold {
@@ -115,9 +134,19 @@ experiment TEST type:gui {
 	
 	// ----------------
 	// SUBSIDIES POLICY
-	// TODO turn it into a slider (amount of support) and cost based on potential change
-	parameter "Active mode subvention" var:BS category:"Public support actions" init:false;
-	// parameter "Electric vehicles subvention" var:EV category:"Public support actions" init:false;
+	parameter "Active mode subvention" var:BS category:"Public support actions" init:false enables:[BSA];
+	parameter "eBike subsidies" var:BSA category:"Public support actions" min:0.1 max:1.0 init:0.2;
+	//parameter "Electric vehicles subvention" var:EV category:"Public support actions" init:false enables:[EVA];
+	//parameter "EV subsidies" var:EVA category:"Public support actions" min:0.01 max:1.0 init:0.05;
+	
+	// ----------------
+	// NON STRUCTURED POLICY
+	parameter "Speed limit" var:SL category:"Public support actions" min:20 max:70 init:50 step:10;
+	
+	// ----------------
+	// PUBLIC TRANSPORT SERVICES
+	parameter "Public transport confort" var:PTC category:"Public transport sevices" min:0.0 max:1.0 init:0.0;
+	parameter "Public transport frequency" var:PTF category:"Public transport sevices" min:0.0 max:1.0 init:0.0;
 	
 	// ============================
 	// INFRASTRUCTURE UPDATE POLICY
@@ -130,31 +159,51 @@ experiment TEST type:gui {
 		
 		publicwork pw;
 		
-		if overall { 
-			ask thecity.mayor {
-				pw <- invest_equipement(mode first_with (each.name=Md),nil,nil,amount);
-			}
+		if overall {
+			pw <- thecity.mayor.invest_equipement(mode first_with (each.name=Md),nil,nil,amount);
 		}
 		else {
 			district o <- district[_districts index_of DF];
 			district d <- district[_districts index_of DT];
 			geometry e <- thecity.access edge_between (o.location::d.location);
 			if e = nil { d <- o; }
-			ask thecity.mayor { 
-				pw <- invest_equipement(mode first_with (each.name=Md),o,d,amount);
-			}
+			pw <- thecity.mayor.invest_equipement(mode first_with (each.name=Md),o,d,amount);
 		}
 		
 		string pwhere <- overall ? "at the scale of the city" : 
 				(DF=DT? "within "+DF : "between "+DF+" and "+DT); 
 		map  result <- user_input_dialog(
 			"You are about to build "+Md+" infrastructure "+pwhere+
-			"\nThe global cost will be "+with_precision(pw.costs()/1000000,2)+"M€",[ 
+			"\nThe global cost will be "+with_precision(pw.costs()/1000000,2)+"M€ over "
+			+with_precision(pw.duration()/#year,2)+" year(s)",[ 
 				choose("accept?",bool,true,[true,false])
 			]);	
 		
 		ask pw {if bool(result["accept?"]) {do register();} else {do die;}}
 	} 
+	
+	// CARPARKS
+	parameter "Target carpark management" var:CPT among:_districts init:_districts[0] category:"Carparks";
+	parameter "Amount of carparks" var:nbcarparks min:-200 max:500 category:"Carparks";
+	user_command "Launch carpark public work" category:"Carparks" {
+		
+		district distarget <- district[_districts index_of CPT];
+		publicwork pw <- thecity.mayor.manage_carpark(distarget, nbcarparks);
+		
+		map  result <- user_input_dialog(
+			"You are about to "+(nbcarparks<0?"remove ":"build ")
+			+abs(nbcarparks)+" carpark "+(nbcarparks<0?"from ":"in ")+CPT+" (actual is "
+			+district[_districts index_of CPT].parcapacity+")"+
+			"\nThe global cost will be "+int(pw.costs()/1000)+"k€ over "
+			+with_precision(pw.duration()/#year,2)+" year(s)",[ 
+				choose("accept?",bool,true,[true,false])
+			]);	
+			
+		ask pw {if bool(result["accept?"]) {do register();} else {do die;}}
+		
+	}
+	
+	// ============================================== //
 	
 	output {
 		display main {

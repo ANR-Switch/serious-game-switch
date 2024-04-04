@@ -33,6 +33,15 @@ global {
 	
 	// Public work 
 	float PUBLICWORK_LAST_5KM_TRANSPORT <- 6#month;
+	float PUBLICWORK_LAST_100CARPARK <- 2#month;
+	// Ratio du doigt mouillé
+	map<string,float> BUDGET_COST_RATIO_MODE <- [
+		CARMODE::10,BIKEMODE::1,PUBLICTRANSPORTMODE::15
+	];
+	
+	// Speed limit
+	int BASE_SPEED_LIMIT <- 50;
+	float SPEED_FACTOR <- 0.05 min:0.02 max:0.1;
 	
 	// **************************** //
 	//								//
@@ -144,6 +153,10 @@ global {
 	int CRITERIA_MINEVAL <- 1;
 	int CRITERIA_MAXEVAL <- 10;
 	
+	// How strong current behavior determine future behavior
+	float MOBILITY_BEHAVIOR_INERTIA <- 0.95;
+	float MODE_POTENTIAL_INERTIA <- 0.95;
+	
 	// INCOME AGENDA PREFERENCES
 	float HIGH_INCOME_PLayer <- 0.1; // how much high income are repelled by the suberb
 	float MID_INCOME_PDistance <- 0.5; // how much middle income wants to live in their neighborhood (like a bobo) or like rich people
@@ -183,13 +196,13 @@ global {
 	// TODO : https://www.cerema.fr/fr/centre-ressources/boutique/donnees-mobilite-modelisation-deplacements
 	map<string,map<float,float>> DISTPREF <- [
 		CARMODE::[ // Combination of car and motorbike
-			5#km::0.63,10#km::0.75,20#km::0.83,35#km::0.84,50#km::0.81
+			5#km::0.48,10#km::0.75,20#km::0.83,35#km::0.84,50#km::0.81
 		],
 		PUBLICTRANSPORTMODE::[
-			5#km::0.16,10#km::0.18,20#km::0.14,35#km::0.13,50#km::0.16
+			5#km::0.12,10#km::0.18,20#km::0.14,35#km::0.13,50#km::0.16
 		],
 		BIKEMODE::[
-			5#km::0.05,10#km::0.02,20#km::0.005,35#km::0.002,50#km::0.001
+			5#km::0.29,10#km::0.02,20#km::0.005,35#km::0.002,50#km::0.001
 		]
 	];
 	
@@ -224,6 +237,15 @@ global {
 		TIME::4
 	];
 	
+	// https://www.statistiques.developpement-durable.gouv.fr/le-parc-de-vehicules-au-1er-janvier-2022-dans-les-territoires-concernes-par-une-zone-faibles
+	// C3:21% C4:6.1% C5:1.2% NC:2.3%
+	float ZFE_CRIT2 <- 0.096;
+	float ZFE_CRIT3 <- 0.306; 
+	// https://www.ecologie.gouv.fr/sites/default/files/Théma%20-%20Les%20voitures%20des%20ménages%20modeste%20-%20%20moins%20nombreuses%20mais%20plus%20anciennes_0.pdf
+	// Qn = quantile de revenu, xx/xx = proportion crières 1 ou 2 / critères 3 et +
+	// Q1:34/66,Q3:51/49,Q5:63/37
+	map<string,int> ZFE_X_ECONOMY <- [LOW_INCOMES::66/100,MEDIAN_INCOMES::49/100,HIGH_INCOMES::37/100];
+	
 	// **************************** //
 	//								//
 	//			  BUDGET			//
@@ -238,7 +260,7 @@ global {
 	// https://www.collectivites-locales.gouv.fr/collectivites-locales-chiffres-2023
 	// ##############################################################################
 	
-	float INVEST_BUDGET_PER_INHABITANT <- 331; 
+	int INVEST_BUDGET_PER_INHABITANT <- 331; 
 	
 	// Part des dépenses d'investissement dans les équipement de transport 
 	
@@ -251,7 +273,7 @@ global {
 	 * Donne le montant des investissements annuels dans les équipements de transports
 	 */
 	int __actual_base_annual_budget(city c) { 
-		return INVEST_BUDGET_PER_INHABITANT*c.total_population();
+		return INVEST_BUDGET_PER_INHABITANT*c.total_population()*BUDGET_RATIO_EQUIPEMENT_TRANSPORT;
 	}
 	
 	// !!!!!!!!!!!!!!!!!!!!!!!
@@ -261,7 +283,7 @@ global {
 	
 	// bis_141_budget_du_maire.pdf
 	float BUDGET_BALANCE_FUNCTIONING <- (37.6+16.7+8.6+4.6) / (52.3+14.1+13.4);
-	float LOCAL_TAXE_RATIO_BALANCE <- 52.3 / (52.3+14.1+13.4);
+	float LOCAL_TAXE_RATIO_BALANCE <- 52.3 / (52.3+14.1+13.4) * 12.3 / (7.8+3.4); // recette de fonctionnement into excedent en recette d'investissement
 	
 	// Ratio of TICPE over budget input
 	float FUEL_TAXE_RATIO_BALANCE <- 0.07; // ratio of TICPE input in budget balance see Chapitre 1 - Les chiffres clés des collectivités 2023
@@ -273,6 +295,7 @@ global {
 	float PT_PAYMENT_RATIO <- 0.18;  
 	
 	// The ratio of car over bikes for households budget balance
+	// Doigt mouillé
 	float __car_bike_ratio <- 0.95;
 	
 	// IP1855-donnees
@@ -317,6 +340,9 @@ global {
 	// https://www.impots.gouv.fr/sites/default/files/media/9_statistiques/0_etudes_et_stats/0_publications/dgfip_statistiques/2023/num16_05/dgfip_stat_16_2023.pdf
 	int LOCAL_TAXE_HAB <- 95;
 	int LOCAL_TAXE_FON <- 889;
+	
+	// https://www.reseaunationalamenageurs.logement.gouv.fr/IMG/pdf/sareco_190704.pdf
+	int CARPARK_PRICE <- 8000;
 	
 	// **************************** //
 	//								//

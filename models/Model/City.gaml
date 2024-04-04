@@ -70,12 +70,19 @@ species city {
 					if res[DISTANCE]<1 or not(is_number(res[DISTANCE]))  {res[DISTANCE] <- 1;}
 				}
 				match WEITHER { res[WEITHER] <- current_weither; } 
-				match CYCLING_ROADS { res[CYCLING_ROADS] <- _BIKEROAD[int(o),int(d)]; }
-				match PUBLIC_TRANSPORT_OFFER { res[PUBLIC_TRANSPORT_OFFER] <- _PUBLICTRANSPORT[int(o),int(d)]; }
+				match CYCLING_ROADS {
+					float sumofdisturbances <- sum(publicworks collect (each._disturbances[BIKE][int(o),int(d)]));
+					res[CYCLING_ROADS] <- _BIKEROAD[int(o),int(d)] * sumofdisturbances;
+				}
+				match PUBLIC_TRANSPORT_OFFER { 
+					float sumofdisturbances <- sum(publicworks collect (each._disturbances[PUBLICTRANSPORT][int(o),int(d)]));
+					res[PUBLIC_TRANSPORT_OFFER] <- _PUBLICTRANSPORT[int(o),int(d)];
+				}
 				match TRAFIC_JAM {
+					float sumofdisturbances <- sum(publicworks collect (each._disturbances[CAR][int(o),int(d)]));
 					// TODO : a valider
 					float infra_x_usage <- sum(_MODE[CAR])=0 ? 1 : sum(_MODE[CAR])/sum(_MODE.values collect (sum(each))); 
-					res[TRAFIC_JAM] <- _CAROAD[int(o),int(d)] * infra_x_usage;
+					res[TRAFIC_JAM] <- _CAROAD[int(o),int(d)] * infra_x_usage * sumofdisturbances;
 				}
 			}
 		}
@@ -102,13 +109,13 @@ species city {
 	/*
 	 * Return origin / destination from the geometry of the edges of the _access_ graph
 	 */
-	pair<district> __get_district_from_edge(geometry edge) { return __get_district_from_node(access source_of edge)::__get_district_from_node(access target_of edge); }
+	pair<district,district> __get_district_from_edge(geometry edge) { return __get_district_from_node(access source_of edge)::__get_district_from_node(access target_of edge); }
 	
 	/*
 	 * Get number of trips from the geometry of the edges of the _access_ graph
 	 */
 	int __get_traffic_from_edge(geometry edge, mode m <- nil) { 
-		pair<district> od <- __get_district_from_edge(edge);
+		pair<district,district> od <- __get_district_from_edge(edge);
 		if m=nil {return sum(_MODE.values collect (each[int(od.key),int(od.value)] + each[int(od.value),int(od.key)]));}
 		return _MODE[m][int(od.key),int(od.value)]+_MODE[m][int(od.value),int(od.key)];
 	}
@@ -118,10 +125,10 @@ species city {
 	/**
 	 * District attribute 'q' should be init before to call this action
 	 */
-	action __init_accessibility_matrices(point bike_access <- {0.0,1.0}, point pt_access <- {0.0,1.0}, point carpacity <- {0.0,1.0}) {
+	action __init_accessibility_matrices(point baccess <- {0.0,1.0}, point pt_access <- {0.0,1.0}, point carpacity <- {0.0,1.0}) {
 		// bike roads matrics = how good is the bike dedicated infrastructures between districts
 		_BIKEROAD <- {length(q),length(q)} matrix_with 0.0;
-		loop x from:0 to:length(q)-1 { loop y from:0 to:length(q)-1 { _BIKEROAD[{x,y}] <- rnd(bike_access.x,bike_access.y); } }
+		loop x from:0 to:length(q)-1 { loop y from:0 to:length(q)-1 { _BIKEROAD[{x,y}] <- rnd(baccess.x,baccess.y); } }
 		// public transport matrics = how good is the public transport offer between districts
 		_PUBLICTRANSPORT <- {length(q),length(q)} matrix_with 0.0;
 		loop x from:0 to:length(q)-1 { loop y from:0 to:length(q)-1 { _PUBLICTRANSPORT[{x,y}] <- rnd(pt_access.x,pt_access.y); } }
@@ -171,7 +178,7 @@ species district {
 		map<household,bool> lh <- (pop.keys where (pop[each] > 0)) as_map (each::false);
 		// Except on monday / saturday more or less keep the same OD matrix
 		if [1,2,3,4,6] contains current_date.day_of_week { 
-			list<household> ml <- lh.keys where flip(each.think_about_switching_behavior);
+			list<household> ml <- lh.keys where each.reevaluate_mobility_behavior();
 			lh <- ml as_map (each::true);
 		}
 		map<mode,list<int>> districtOD <- __HOUSEHOLD_OD_MATRIX(current_date.day_of_week >= 5 ? LEISURE : WORK, lh);
@@ -229,6 +236,7 @@ species district {
 					res[m][int(d)] <- res[m][int(d)] + toadd;
 				}	
 			}
+			ask hh {do update_modpotential(myself);}
 		}
 		
 		float sumoftrips <- sum(res.values collect sum(each));
@@ -258,135 +266,5 @@ species district {
 		
 		return int_res;
 	}
-	
-}
-
-/**
- * 
- Public work to adapt change infrastructure
- * 
- */
-species publicwork control:fsm {
-	mode m; // mode to act directly upon
-	city c; 
-	point target <- PUBLICWORK_NOTARGET; // specific section of the city to work on
-	float amount; // overall effort in equipement improvement
-	
-	date startdate;
-	date endate;
-	
-	float disturbance;
-	map<mode,matrix<float>> disturbances;
-	
-	state start initial:true {
-		enter { 
-			if not (c.publicworks contains self) {
-				error "Il faut enregistrer les travaux publiques dans les registres municipaux !!!";
-			}
-			startdate <- current_date;
-			// Global end time depends on the size of the public work
-			endate <- current_date + duration() * (amount+rnd(0.8,1.3));
-		}
-		transition to:ongoing when:true;
-	}
-	
-	state ongoing {
-		// disturbance is computed in between 0 and 0.2
-		enter { disturbance <- sqrt(amount*PWDISTURBANCE); }
-		
-		// TODO : to base disturbances matrix on access network  
-		
-		matrix<float> bm;
-		matrix<float> bm05;
-		matrix<float> bm02;
-		float actualD <- disturbance * (1 - 1 / (1 + #e ^ ((current_date-endate)/1#week)));
-		if target=PUBLICWORK_NOTARGET { 
-			 bm <- {length(c.q),length(c.q)} matrix_with 1-actualD;
-			 bm05 <- copy(bm) * (1-actualD*0.5);
-			 bm02 <- copy(bm) * (1-actualD*0.2);
-		} else {
-			// TODO : more flexibility plz
-			 bm <- {length(c.q),length(c.q)} matrix_with 1.0;
-			 bm[target] <- 1-disturbance;
-			 bm[{target.y,target.x}] <- 1-disturbance; // Two way public works
-			 bm05 <- {length(c.q),length(c.q)} matrix_with 1.0;
-			 bm05[target] <- 1-disturbance*0.5;
-			 bm05[{target.y,target.x}] <- 1-disturbance*0.5;
-			 bm02 <- {length(c.q),length(c.q)} matrix_with 1.0;
-			 bm02[target] <- 1-disturbance*0.2;
-			 bm02[{target.y,target.x}] <- 1-disturbance*0.2;
-		} 
-		
-		// Always max disturbances for cars
-		disturbances[CAR] <- bm;
-		// Max disturbances if bike is targeted, otherwise mitigate disturbances 0.5
-		disturbances[BIKE] <- m=BIKE ? bm : bm05;
-		// Max disturbances if public transport is targeted, otherwise minimal disturbances 0.2
-		disturbances[PUBLICTRANSPORT] <- m=PUBLICTRANSPORT ? bm05 : bm02;
-		
-		// TODO : apply disturbances
-		
-		transition to:end when:current_date <= endate;
-	}
-	
-	// APPLY INFRASTRUCTURE IMPROVEMENT AND CLOSE PUBLIC WORK
-	state end {
-		enter {
-			do apply;
-			c.publicworks >- self; // unregister
-			ask self {do die;} // remove agent
-		}
-	}
-	
-	action apply {
-		matrix<float> infra;
-		bool whole <- target=PUBLICWORK_NOTARGET;
-		switch m {
-			match CAR {
-				infra <- c._CAROAD;
-				// TODO : impact on bikes
-			}
-			match BIKE {
-				infra <- c._BIKEROAD;
-				// TODO : impact on cars
-			}
-			match PUBLICTRANSPORT {
-				infra <- c._PUBLICTRANSPORT;
-				// TODO : impact on cars / bikes
-			}
-		}
-		// actual changes
-		if whole {infra <- infra + infra * amount;}
-		else { infra[target] <- max(0, (min(1, infra[target] + infra[target] * amount))); }
-		
-		// normalize [0:1] values
-		loop x from:0 to:infra.columns-1 { loop y from:0 to:infra.rows-1 { 
-					infra[{x,y}] <- max(0,min(1,infra[{x,y}]));
-				}}
-	}
-	
-	/*
-	 * Overall cost of the PW
-	 */
-	float costs {
-		return world.__actual_base_annual_budget(c)*BUDGET_RATIO_EQUIPEMENT_TRANSPORT*amount
-				*round(duration()/1#year)
-				*(target=PUBLICWORK_NOTARGET ? 1.5 : 1); // penalty on global public work
-	}
-	
-	/*
-	 * Exepcted duration for the PW to be done
-	 */
-	float duration {
-		float duration_pw_per_5km <- target = PUBLICWORK_NOTARGET ?
-			sum(first(district).dist.values)*(1-amount) : 
-			district(target.x).dist[district(target.y)] / 5; // length of public works
-		return PUBLICWORK_LAST_5KM_TRANSPORT * duration_pw_per_5km;
-	}
-	
-	/*
-	 * Register public works in the city admin store
-	 */
-	action register { c.publicworks <+ self; }
 	
 }
