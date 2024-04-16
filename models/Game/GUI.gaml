@@ -197,7 +197,7 @@ species city_viewer mirrors:cityUI {
 			list<float> hhh <- list_with(length(HAPPYDIST),0);
 			loop hh over:d.pop.keys {
 				int i <- 0;
-				loop hhl over:hh.happy(d) { hhh[i] <- hhh[i] + hhl * d.pop[hh]; i <- i+1; }
+				loop hhl over:hh.happy_n_mobility { hhh[i] <- hhh[i] + hhl * d.pop[hh]; i <- i+1; }
 			}
 			
 			int i <- 0;

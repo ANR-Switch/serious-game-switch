@@ -10,36 +10,56 @@ model Publicworks
 
 import "City.gaml"
 
-/* Insert your model definition here */
-
 /**
  * Public works for infrastructure
  */
 species infrapw parent:publicwork {
 	
 	/*
-	 * 
 	 */
 	action apply {
+		
 		matrix<float> infra;
+		matrix<float> neginfra;
+		float negimpact;
 		bool whole <- target=PUBLICWORK_NOTARGET;
+		
 		switch m {
 			match CAR {
 				infra <- c._CAROAD;
-				// TODO : impact on bikes
+				c.car_infrastructure_dimension <- (1-amount)*c.car_infrastructure_dimension + 
+												amount * (c.car_infrastructure_dimension^IDP);
+				// Adversarial impact on bikes
+				neginfra <- c._BIKEROAD;
+				negimpact <- amount * (c.bike_infrastructure_dimension^IDP);
+				c.bike_infrastructure_dimension <- c.bike_infrastructure_dimension - negimpact;
 			}
 			match BIKE {
 				infra <- c._BIKEROAD;
-				// TODO : impact on cars
+				c.bike_infrastructure_dimension <- (1-amount)*c.bike_infrastructure_dimension + 
+												amount * (c.bike_infrastructure_dimension^IDP);
+				// Adversarial impact on cars	
+				neginfra <- c._CAROAD;
+				negimpact <- amount * (c.car_infrastructure_dimension^IDP);
+				c.car_infrastructure_dimension <- c.car_infrastructure_dimension - negimpact;
 			}
 			match PUBLICTRANSPORT {
 				infra <- c._PUBLICTRANSPORT;
-				// TODO : impact on cars / bikes
+				c.pt_infrastructure_dimension <- (1-amount)*c.pt_infrastructure_dimension +
+												amount * (c.bike_infrastructure_dimension^IDP);
+				// Adversarial impact on cars	
+				neginfra <- c._CAROAD;
+				negimpact <- amount * (c.car_infrastructure_dimension^IDP);
+				c.car_infrastructure_dimension <- c.car_infrastructure_dimension - negimpact;
 			}
 		}
+		
 		// actual changes
-		if whole {infra <- infra + infra * amount;}
-		else { infra[target] <- max(0, (min(1, infra[target] + infra[target] * amount))); }
+		if whole {infra <- infra + infra * amount; neginfra <- neginfra - neginfra * negimpact;}
+		else { 
+			infra[target] <- max(0, (min(1, infra[target] + infra[target] * amount)));
+			neginfra[target] <- max(0, (min(1, neginfra[target] - neginfra[target] * negimpact)));
+		}
 		
 		// normalize [0:1] values
 		loop x from:0 to:infra.columns-1 { loop y from:0 to:infra.rows-1 { 
@@ -124,6 +144,8 @@ species publicwork control:fsm virtual:true {
 			startdate <- current_date;
 			// Global end time depends on the size of the public work
 			endate <- current_date + duration() * (amount+rnd(0.8,1.3));
+			// Init disturbances
+			loop m over:mode { _disturbances[m] <- {length(c.q),length(c.q)} matrix_with 1.0; }
 		}
 		transition to:ongoing when:true;
 	}

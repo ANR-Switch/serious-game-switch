@@ -50,9 +50,9 @@ species city {
 	list<publicwork> publicworks;
 	
 	// TODO infrastructure modification should lower or increase expected infrastructure usage ratio
-	float car_infrastructure_dimension <- CARMOBEXP;
-	float pt_infrastructure_dimension <- PUBMOBEXP;
-	float bike_infrastructure_dimension <- BIKMOBEXP;
+	float car_infrastructure_dimension <- CARMOBEXP min:0.01 max:1.0;
+	float pt_infrastructure_dimension <- PUBMOBEXP min:0.01 max:1.0;
+	float bike_infrastructure_dimension <- BIKMOBEXP min:0.01 max:1.0;
 	
 	// =========================
 	
@@ -135,6 +135,20 @@ species city {
 		// car road congestion factor
 		_CAROAD <- {length(q),length(q)} matrix_with 0.0;
 		loop x from:0 to:length(q)-1 { loop y from:0 to:length(q)-1 { _CAROAD[{x,y}] <- 1 - rnd(pt_access.x,pt_access.y); } }
+	}
+	
+	// =========================
+	// Generic accessor
+	
+	/*
+	 * Mean of access matrix for a given mode
+	 */
+	float overallaccess(mode m) {
+		switch m {
+			match CAR { return mean(_CAROAD); }
+			match BIKE { return mean(_BIKEROAD); }
+			match PUBLICTRANSPORT { return mean(_PUBLICTRANSPORT); }
+		}
 	}
 	
 	/*

@@ -35,6 +35,8 @@ global {
 	// Household satisfaction starting distribution
 	// https://ourworldindata.org/happiness-and-life-satisfaction
 	list<int> HAPPYDIST <- [1,1,2,4,5,10,6,5,5,1];
+	list<int> HAPPYEST <- [1,1,1,2,3,6,10,10,5,2];
+	list<int> HAPPYLESS <- [2,2,4,6,6,7,4,2,1,1];
 	
 	string WORK <- "WORK";
 	string LEISURE <- "LEISURE";

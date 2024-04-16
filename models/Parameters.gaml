@@ -38,6 +38,9 @@ global {
 	map<string,float> BUDGET_COST_RATIO_MODE <- [
 		CARMODE::10,BIKEMODE::1,PUBLICTRANSPORTMODE::15
 	];
+	// Infrastructure dimension change power:
+	// the higher the slower the improvement will be
+	float IDP <- 3;
 	
 	// Speed limit
 	int BASE_SPEED_LIMIT <- 50;
@@ -64,10 +67,6 @@ global {
 	
 	// https://www.statistiques.developpement-durable.gouv.fr/edition-numerique/chiffres-cles-du-logement-2022/7-proprietaires-occupants#:~:text=Début%202021%2C%2017%2C6%20millions,(%2B%205%2C7%20points).
 	float RATIO_OWNERS <- 0.577;
-	
-	// PSY PARAMS : actually more rates than probabilities
-	float RATE_EVO_HABITS <- 0.05; // TODO : find a place to add habits drop off
-	float PROBA_CHANGE_BEHAVIOR <- 0.01;
 	
 	// Probability modes ownership considering income
 	map<string, float> LOW_INCOME_MODES <- [
@@ -157,10 +156,23 @@ global {
 	float MOBILITY_BEHAVIOR_INERTIA <- 0.95;
 	float MODE_POTENTIAL_INERTIA <- 0.95;
 	
+	// How fast attitude toward mobility politicy changes quickly
+	float ATTITUDESHIFT <- 0.05;
+	
 	// INCOME AGENDA PREFERENCES
 	float HIGH_INCOME_PLayer <- 0.1; // how much high income are repelled by the suberb
 	float MID_INCOME_PDistance <- 0.5; // how much middle income wants to live in their neighborhood (like a bobo) or like rich people
 	float LOW_INCOME_PDistance <- 1.0; // how much low income dislike moving far (TODO : should be counter balanced by economic choice - they don't have)
+	
+	// **************************** //
+	// 		  COGNITIVE BIAS		//
+	
+	bool BHALO <- true;
+	bool BREACT <- true;
+	
+	float BHABIT <- 5.0;
+	// PSY PARAMS : actually more rates than probabilities
+	float RATE_EVO_HABITS <- 0.01; // TODO : find a place to add habits drop off
 	
 	// **************************** //
 	//								//
@@ -290,6 +302,10 @@ global {
 	
 	// Ratio of "Versement mobilité" over budget input
 	float PT_TAXE_RATIO_BALANCE <- 0.03;
+	
+	// All budget input (ratio of starting budget to be input over a year)
+	list<float> ALL_BUDGET_INPUT_RATIO <- [LOCAL_TAXE_RATIO_BALANCE,FUEL_TAXE_RATIO_BALANCE,PT_TAXE_RATIO_BALANCE];
+	
 	// Ratio of public transport cost payed with tickets
 	// https://www.statistiques.developpement-durable.gouv.fr/sites/default/files/2018-11/datalab-essentiel-150-transport-collectif-urbain-septembre2018.pdf
 	float PT_PAYMENT_RATIO <- 0.18;  

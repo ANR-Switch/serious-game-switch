@@ -13,7 +13,16 @@ import "SBuilder.gaml"
 
 global {
 	
+	// SCORING
+	
+	float CPS_POS; 
+	float CPS_NEG; 
+	
 	// PARAMETERS
+	
+	// CogBias
+	bool HL <- BHALO; // halo
+	float HBT <- BHABIT; // habits 
 	
 	// taxes
 	float FT;
@@ -25,7 +34,6 @@ global {
 	bool BS; // on_change:{ ask mayor {__bike_subsidies <- BS ? BSA : 0.0;} };
 	float BSA;
 	// Launch subsidies for ecars
-	// TODO : up
 	bool EV;
 	float EVA;
 	// Speed limit
@@ -47,6 +55,10 @@ global {
 			if SL!=BASE_SPEED_LIMIT {do lowerspeedlimit(SL); BASE_SPEED_LIMIT <- SL;}
 			do increasePTatractivness(PTC,PTF);
 		}
+		pair<float,float> score <- political_score();
+		CPS_POS <- score.key; CPS_NEG <- score.value;
+		// COGBIAS
+		ask household { habit <- HBT; halo <- HL; }
 	}
 	
 	// INFRASTRUCTURE ACTIONS
@@ -110,7 +122,6 @@ global {
 	
 	// UTILS : Display revealed preferences
 	map<string, map<string,float>> spider_criteria update:critxhousehold();
-	
 	map<string, map<string,float>> critxhousehold {
 		map<string, map<string,float>> res <- CRITERIAS as_map (each::map<string,float>([]));
 		loop c over:CRITERIAS {
@@ -136,8 +147,8 @@ experiment TEST type:gui {
 	// SUBSIDIES POLICY
 	parameter "Active mode subvention" var:BS category:"Public support actions" init:false enables:[BSA];
 	parameter "eBike subsidies" var:BSA category:"Public support actions" min:0.1 max:1.0 init:0.2;
-	//parameter "Electric vehicles subvention" var:EV category:"Public support actions" init:false enables:[EVA];
-	//parameter "EV subsidies" var:EVA category:"Public support actions" min:0.01 max:1.0 init:0.05;
+	parameter "Electric vehicles subvention" var:EV category:"Public support actions" init:false enables:[EVA];
+	parameter "EV subsidies" var:EVA category:"Public support actions" min:0.01 max:1.0 init:0.05;
 	
 	// ----------------
 	// NON STRUCTURED POLICY
@@ -203,9 +214,21 @@ experiment TEST type:gui {
 		
 	}
 	
+	// ====================
+	// COGNITIVE BIAS & PSY
+	
+	parameter "halo bias" var:HL category:"Cognitive bias";
+	parameter "strength of habits" var:HBT category:"Cognitive bias";
+	
+	
+	
+	// ============================================== //
+	// ============================================== //
 	// ============================================== //
 	
 	output {
+		monitor "Citizen political support" value:CPS_POS color:blend(#grey,#green,CPS_POS);
+		monitor "Citizen political reject" value:CPS_NEG color:blend(#grey,#red,CPS_NEG);
 		display main {
 			graphics connections {
 				loop e over:thecity.access.edges {
@@ -276,7 +299,7 @@ experiment TEST type:gui {
 			}
 		}
 		display playerbudget type:2d {
-			chart "budget" type:series {data "budget" value:first(mayor).budget;}
+			chart "budget" type:series {data "budget" value:thecity.mayor.budget;}
 		}
 	}
 	

@@ -255,13 +255,10 @@ species switchBuilder {
 	 * Create the player 
 	 */
 	mayor INIT_MAYOR(city c) { 
-		create mayor with:[mycity::c,budget::
-			INVEST_BUDGET_PER_INHABITANT*c.total_population()
-		]; 
-		ask c {self.mayor <- first(mayor);}
-		ask first(mayor) {
+		create mayor with:[mycity::c] {
 			loop m over:mode { __city_modes_policy[m] <- CRITERIAS as_map (each::1.0); } // TODO : may be not initial 1.0 for every mode and criterias
-		}
+		} 
+		ask c {self.mayor <- first(mayor);}
 		return c.mayor; 
 	}
 	

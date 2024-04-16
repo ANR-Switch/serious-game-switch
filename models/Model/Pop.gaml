@@ -24,12 +24,28 @@ global {
 		create household with:[householder::householder,number_of_child::nb_child,incomes::income] {
 			size <- (householder=SINGLE ? 1 : 2) + number_of_child;
 			budget <- insee_budget[incomes];
-			
-			// PSY PARAMETERS
-			think_about_switching_behavior <- PROBA_CHANGE_BEHAVIOR;
 		}
 		
 		return last(household);
+	}
+	
+	/**
+	 * Adjust satisfaction distribution of households
+	 */
+	reflex mobsatisfaction when:every(#week) {
+		city c <- first(city); // TODO : do we need to think about several cities?
+		ask household {
+			float w <- 1+abs(__mobemotion)+abs(__mobattitude);
+			happy_n_mobility <- range(length(happy_n_mobility)-1) collect
+				((happy_n_mobility[each] + 
+					(__mobemotion>0?HAPPYEST[each]*__mobemotion:HAPPYLESS[each]*abs(__mobemotion)) +
+					(__mobattitude>0?HAPPYLESS[each]*__mobattitude:HAPPYLESS[each]*abs(__mobattitude))
+				) / w);
+			
+			// Decrease emotion arising from event, slowly when strong, fast when soft
+			__mobemotion <- (__mobemotion<0?-1:1)*(__mobemotion^2);
+			__mobattitude <- (1-ATTITUDESHIFT) * __mobattitude + eval_infrastructure(c) * ATTITUDESHIFT;
+		}
 	}
 	
 }
@@ -63,11 +79,19 @@ species household schedules:[] {
 	map<mode,float> mod_potential; // synthesis habits and potential (e.g. number of vehicles owned)
 	map<mode,matrix<float>> trip_habits; // passed mobilities
 	
-	// Reconsider antecedant of mode choices
-	float think_about_switching_behavior; // TODO turn into "la force de l'habitude"
-	
 	// How happy this kind of household is regarding the state of the city they live in
-	list<int> happy(district d) {return HAPPYDIST;} // TODO : adapts
+	list<int> happy_n_mobility <- copy(HAPPYDIST);
+	// Bad events (like in AET)
+	float __mobemotion <- 0.0 min:-0.99 max:0.99;
+	// Bad attitude alignment (I can't do what i want, what i need, what i desireved, etc.)
+	float __mobattitude <- 0.0 min:-1.0 max:1.0;
+	
+	// ************
+	// Cogntivie bias
+	
+	bool halo <- BHALO;
+	float habit <- BHABIT;
+	float reactance <- BREACT;
 	
 	// ************
 	// reporting
@@ -76,6 +100,7 @@ species household schedules:[] {
 	// inner decision determinants
 	map<mode,float> __habits <- mode as_map (each::0.0);
 	map<mode,float> __potential <- mode as_map (each::0.0);
+	// raw scoring [-1;1]
 	map<string,map<mode,float>> __criterias <- CRITERIAS as_map (each::mode as_map (each::0.0));
 
 	// ############
@@ -83,7 +108,7 @@ species household schedules:[] {
 	map<mode,float> mode_choices(district o, district d, string p) {
 		
 		// HABITUS
-		map<mode,float> res <- mode as_map (each::trip_habits[each][{int(o),int(d)}]);
+		map<mode,float> res <- mode as_map (each::trip_habits[each][{int(o),int(d)}]*habit);
 		/* REPORT */ __habits <- mode as_map (each::(__habits[each]+res[each]));
 		
 		// POTENTIAL
@@ -101,6 +126,8 @@ species household schedules:[] {
 		
 		// CONTEXTUAL CRITERIA
 		map<mode,float> criteval <- mode as_map (each::0.0);
+		
+		mode pref <- halo ? mod_potential.keys with_max_of mod_potential[each] : nil;
 		
 		loop m over:mode {
 			
@@ -124,7 +151,7 @@ species household schedules:[] {
 			critxmod[TIME] <- _time_eval(m,trip[DISTANCE]*#km,accessibility[m],modxcrit[TIME]);
 			// write TIME+"|"+prio_criterias[TIME]+" = "+critxmod[TIME];
 			critxmod[PRICE] <- _price_eval(m,o,modxcrit[PRICE]);
-			// write PRICE+"|"+prio_criterias[PRICE]+" = "+critxmod[PRICE]; 
+			write PRICE+"|"+prio_criterias[PRICE]+" = "+critxmod[PRICE]; 
 			critxmod[ECOLO] <- modxcrit[ECOLO];
 			// write ECOLO+"|"+prio_criterias[ECOLO]+" = "+critxmod[ECOLO];
 			critxmod[CONFORT] <- modxcrit[CONFORT] * accessibility[m];
@@ -133,6 +160,13 @@ species household schedules:[] {
 			// write SAFE+"|"+prio_criterias[SAFE]+" = "+critxmod[SAFE];
 			critxmod[EASY] <- modxcrit[EASY];
 			// write EASY+"|"+prio_criterias[EASY]+" = "+critxmod[EASY];
+			
+			// =========
+			// HALO BIAS
+			if m=pref { 
+				string halotarget <- critxmod.keys with_min_of critxmod[each];
+				critxmod[halotarget] <- 1.0; // because it is a cumulative decision
+			}
 			
 			// AGGREGATION
 			criteval[m] <- sum(critxmod.values);
@@ -191,6 +225,11 @@ species household schedules:[] {
 						: max(midpoint-MAX_PUBLIC_TRANSPORT_WEITHER_RANGE, current_weather);
 			}
 		}
+	}
+	
+	// REVEALED PREFERENCES
+	map<string,float> mode_revealed_preferences(mode m) { 
+		return __criterias.keys as_map (each::__criterias[each][m]/__mode_scores_incr);
 	}
 	
 	// ---------------------------------
@@ -279,8 +318,6 @@ species household schedules:[] {
 			// store old::new
 			modechange[m] <- old_habit::trip_habits[m][{int(origin),int(destination)}];  
 		}
-		
-		ask origin.c.mayor {do allow_subsidies_to(myself,origin,modechange);}
 	}
 	
 	/**
@@ -297,10 +334,20 @@ species household schedules:[] {
 			float newpotential <- mod_potential[CAR] * MODE_POTENTIAL_INERTIA + (mod_potential[CAR]-carestriction) * (1-MODE_POTENTIAL_INERTIA);
 			mod_potential[CAR] <- (1-localpotential) * mod_potential[CAR] + newpotential * localpotential;  
 		}
+		if d.c.mayor.__ev_subsidies > 0.0 and mod_potential[CAR] < carhabits {
+			float newpotential <- mod_potential[CAR] * MODE_POTENTIAL_INERTIA + carhabits * (1-MODE_POTENTIAL_INERTIA);
+			// Ask for the subsidies
+			ask d.c.mayor {do allow_subsidies_to(myself,d,CAR,newpotential-myself.mod_potential[CAR]);}
+			// Apply new potential
+			mod_potential[CAR] <- (1-localpotential) * mod_potential[CAR] + newpotential * localpotential;
+		}
 		// GOTO BIKE
 		float bikehabits <- mean(trip_habits[BIKE]);
 		if d.c.mayor.__bike_subsidies > 0.0 and mod_potential[BIKE] < bikehabits { 
 			float newpotential <- mod_potential[BIKE] * MODE_POTENTIAL_INERTIA + bikehabits * (1-MODE_POTENTIAL_INERTIA);
+			// Ask for the subsidies
+			ask d.c.mayor {do allow_subsidies_to(myself,d,BIKE,newpotential-myself.mod_potential[BIKE]);}
+			// Apply new potential
 			mod_potential[BIKE] <- (1-localpotential) * mod_potential[BIKE] + newpotential * localpotential;  
 		}
 		// TODO : GOTO PT = Safety ???
@@ -311,6 +358,23 @@ species household schedules:[] {
 	 */
 	bool reevaluate_mobility_behavior(float ceiling <- MOBILITY_BEHAVIOR_INERTIA) { 
 		return flip(1-(MOBILITY_BEHAVIOR_INERTIA+max(trip_habits collect mean(each)))/2);
+	}
+	
+	// ---------------------
+	// EVALUATION OF ACTIONS
+	
+	// DIRECT IMPACT ON MOBILITY SATISFACTION
+	// SHOULD BE BASED ON ACTUAL MOBILITY HABITS 
+	
+	float eval_infrastructure(city c) {
+		float ei <- 0.0;
+		loop m over:mode {
+			// Potential + habits
+			float wm <- (mod_potential[m]+mean(trip_habits[m]))/2;
+			// Discrepancy between accessibility and desired/actual behavior
+			ei <- ei + (c.overallaccess(m) - wm) / length(mode);
+		}
+		return ei;
 	}
 	
 }

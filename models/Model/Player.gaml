@@ -31,26 +31,38 @@ global {
 	/*
 	 * Between 0 and 1, how much households adhere to the policity regarding mode management in the city
 	 */
-	float political_score {
+	pair<float,float> political_score {
+		
+		// TODO : include satisfaction level
 		
 		// Based on modes policy compare to household preferences 
-		float cmp;
+		float splus;
+		float smoins;
+		mayor mm <- first(mayor);
 		ask household {
-			float score;
+			pair<float,float> score;
 			loop m over:mode { 
+				// WEIGHT OF MODE
+				float mw <- mod_potential[m]/sum(mod_potential.values);
+				map<string,float> mp <- mode_revealed_preferences(m);
 				loop c over:m.criterias.keys {
+					// WEIGHT OF CARACTERISTICS
 					float critweight <- prio_criterias[c]/sum(prio_criterias.values);
-					// TODO : value around 1.0 means no one will adhere, which is a problem
-					if (__criterias[c][m] < 0 and first(mayor).__city_modes_policy[m][c] < 1.0) or 
-						(__criterias[c][m] > 0 and first(mayor).__city_modes_policy[m][c] > 1.0){ 
-						score <- score + critweight;
+					// TODO : value around 0.0 means no one will adhere, which is a problem
+					if (mp[c] < 0 and mm.__city_modes_policy[m][c] < 1.0) or 
+						(mp[c] > 0 and mm.__city_modes_policy[m][c] > 1.0) { 
+						score <- score.key + critweight*mw::score.value;
+					} else if (mp[c] < 0 and mm.__city_modes_policy[m][c] > 1.0) or 
+						(mp[c] > 0 and mm.__city_modes_policy[m][c] < 1.0){
+						score <- score.key::score.value + critweight*mw;
 					}
 				}
 			}
-			cmp <- cmp + score * __weight;
+			splus <- splus + score.key * __weight/100;
+			smoins <- smoins + score.value * __weight/100;
 		}
 		
-		return cmp / length(household);
+		return splus::smoins;
 		
 	}
 	
@@ -121,7 +133,7 @@ species mayor {
 		mycity._CAROAD <- mycity._CAROAD collect (max(0,min(1,each * __city_modes_policy[CAR][TIME]))) as_matrix {length(district),length(district)};  
 	}
 	
-	// TODO : how to parametrize? if we just change potential, it means people are using other modes, which is not realistic at all
+	// Based on the strenght of car habits, households may (probabilistic) or may not switch toward other modes
 	action forbidoldcar(int critair <- 2) {
 		float level <- critair<=2?ZFE_CRIT2:ZFE_CRIT3;
 		loop income over:INCOME_LEVEL { __restricted_cars[income] <- (level + ZFE_X_ECONOMY[income])/2; }
@@ -138,16 +150,28 @@ species mayor {
 		__pt_boost <- __pt_boost + confort + morefreq;
 	}
 	
-	// Household 
-	action allow_subsidies_to(household hh, district d, map<mode,pair<float,float>> switches) {
-		float bikediff <- switches[BIKE].value - switches[BIKE].key;
-		if __bike_subsidies > 0 and bikediff > 0 { 
-			__accorded_bike_subsidies <- __accorded_bike_subsidies + d.pop[hh]/mycity.total_population() * bikediff;
+	// Household that are willing to buy new modes using subsidies
+	action allow_subsidies_to(household hh, district d, mode m, float diff) {
+		switch m {
+			match BIKE {
+				if __bike_subsidies > 0 and diff > 0 { 
+					__accorded_bike_subsidies <- __accorded_bike_subsidies + d.pop[hh]/mycity.total_population() * diff;
+				}
+			}
+			match CAR {
+				if __ev_subsidies > 0 and diff > 0 {
+					__accorded_ev_subsidies <- __accorded_ev_subsidies + d.pop[hh]/mycity.total_population() * diff;
+				}
+			}
 		}
-		if __ev_subsidies > 0 {} // TODO : dev subsidies toward EV
 	}
 	
-	// TODO : promote ecology???
+	action promote_criteria(string crit, float amount) {
+		if not (CRITERIAS contains crit) {
+			error crit+" should be one among "+CRITERIAS;
+		}
+		
+	}
 	
 	// *************
 	// INNER DYNAMIC
@@ -181,6 +205,12 @@ species mayor {
 			__invest <- __invest + __accorded_bike_subsidies * __bike_subsidies * STARTING_BUDGET * #day/#year; // Add the amount of subsidies corresponding to the investment for this round
 		}
 		
+		// Same amount of subsidies for CAR vs BIKE ????
+		if __accorded_ev_subsidies > 0 {
+			__accorded_ev_subsidies <- __accorded_ev_subsidies - __accorded_ev_subsidies * #day/#year; // Reduce the amount of people asking for subsidies
+			__invest <- __invest + __accorded_ev_subsidies * __ev_subsidies * STARTING_BUDGET * #day/#year; // Add the amount of subsidies corresponding to the investment for this round
+		}
+		
 		// write "SUBSIDIES COST: "+__invest; float ii <- __invest;
 		
 		// PUBLIC WORKS
@@ -191,6 +221,10 @@ species mayor {
 				* #day / #year // per step of simulation
 			)
 		);
+		
+		// PUBLIC TRANSPORT 'OVER'FUNCTIONNING
+		float overallinputratio <- sum(ALL_BUDGET_INPUT_RATIO);
+		__invest <- __invest + (overallinputratio - overallinputratio / __pt_boost) * STARTING_BUDGET * #day/#year;
 		
 		// write "PUBLIC WORK COST: "+(__invest-ii);
 		
@@ -226,9 +260,13 @@ species mayor {
 	
 	/**
 	 * Return coefficient of taxation corresponding to a given mode
+	 * 
 	 * </li> CAR related budget balance = car rate * fuel taxes * parc occupancy rate * parc pricing policy
 	 * </li> PUBLIC TRANSPORT related budget balance = public transport rate * pricing
 	 * </li> BIKE NO pricing, but local subvention policies
+	 * 
+	 * It is used to compute how much budget input local authorities can have from mode taxation
+	 * (sort of balance between cost - infrastructure dimension - and benefit - proportion of use) 
 	 */
 	float __get_taxes_coefficient(mode m) {
 		float all_trips <- float(sum(mycity._MODE.values collect (sum(each))));
