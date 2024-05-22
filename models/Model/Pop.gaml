@@ -33,14 +33,32 @@ global {
 	 * Adjust satisfaction distribution of households
 	 */
 	reflex mobsatisfaction when:every(#week) {
-		city c <- first(city); // TODO : do we need to think about several cities?
+		city c <- first(city);
 		ask household {
 			float w <- 1+abs(__mobemotion)+abs(__mobattitude);
+			list<int> oldhnm <- copy(happy_n_mobility); // Keep old sum of sat
+			
+			// update satisfaction
 			happy_n_mobility <- range(length(happy_n_mobility)-1) collect
 				((happy_n_mobility[each] + 
 					(__mobemotion>0?HAPPYEST[each]*__mobemotion:HAPPYLESS[each]*abs(__mobemotion)) +
-					(__mobattitude>0?HAPPYLESS[each]*__mobattitude:HAPPYLESS[each]*abs(__mobattitude))
+					(__mobattitude>0?HAPPYEST[each]*__mobattitude:HAPPYLESS[each]*abs(__mobattitude))
 				) / w);
+			// control for same "sum of sat"
+			int actualsum <- sum(happy_n_mobility);
+			happy_n_mobility <- happy_n_mobility collect (round(each * sum(oldhnm)/actualsum));
+			
+			// integerisation regulation
+			int amountregu <- sum(oldhnm) - sum(happy_n_mobility);
+			if amountregu > 0 {
+				list regu <-  range(length(happy_n_mobility)-1) sort_by (happy_n_mobility[each]-oldhnm[each]);
+				loop i over:regu copy_between (0,amountregu) { happy_n_mobility[i] <- happy_n_mobility[i]+1; }
+			} else if amountregu < 0 {
+				list regu <-  range(length(happy_n_mobility)-1) sort_by (oldhnm[each]-happy_n_mobility[each]);
+				loop i over:regu copy_between (0,abs(amountregu)) { happy_n_mobility[i] <- happy_n_mobility[i]-1; }
+			}
+			
+			if sum(oldhnm) != sum(happy_n_mobility) { error "Integer regularisation has failed: old="+sum(oldhnm)+" | new="+sum(happy_n_mobility);}
 			
 			// Decrease emotion arising from event, slowly when strong, fast when soft
 			__mobemotion <- (__mobemotion<0?-1:1)*(__mobemotion^2);
@@ -92,6 +110,7 @@ species household schedules:[] {
 	bool halo <- BHALO;
 	float habit <- BHABIT;
 	float reactance <- BREACT;
+	float norm <- BNORM;
 	
 	// ************
 	// reporting
@@ -100,11 +119,18 @@ species household schedules:[] {
 	// inner decision determinants
 	map<mode,float> __habits <- mode as_map (each::0.0);
 	map<mode,float> __potential <- mode as_map (each::0.0);
+	map<mode,float> __norms <- mode as_map (each::0.0);
 	// raw scoring [-1;1]
 	map<string,map<mode,float>> __criterias <- CRITERIAS as_map (each::mode as_map (each::0.0));
 
-	// ############
-	// Mode choice
+	
+	// ########### //
+	
+	// Mode choice //
+	
+	// ########### //
+	
+	
 	map<mode,float> mode_choices(district o, district d, string p) {
 		
 		// HABITUS
@@ -114,6 +140,18 @@ species household schedules:[] {
 		// POTENTIAL
 		res <- mode as_map (each::(mod_potential[each] + res[each]));
 		/* REPORT */ __potential <- mode as_map (each::(__potential[each]+mod_potential[each]));
+		
+		// SOCIAL NORM
+		map<mode,float> snorm <- mode as_map (each::0.0);
+		map<household,float> normalizers <- (household-self) as_map (each::hamming_dist(each)); 
+		ask household-self {
+			loop m over:mode { 
+				snorm[m] <- snorm[m] + trip_habits[m][int(o),int(d)] * normalizers[self]/sum(normalizers.values);
+			}
+		}
+		
+		res <- mode as_map (each::(res[each] + snorm[each] * BNORM));
+		/* REPORT */ __norms <- mode as_map (each::__norms[each]+snorm[each]);
 		
 		if res.values one_matches (each>10) {error "Mode score is way too high";}
 		
@@ -125,10 +163,12 @@ species household schedules:[] {
 		accessibility[PUBLICTRANSPORT] <- trip[PUBLIC_TRANSPORT_OFFER];
 		
 		// CONTEXTUAL CRITERIA
-		map<mode,float> criteval <- mode as_map (each::0.0);
+		map<mode,map<string,float>> modecritval <- mode as_map (each::CRITERIAS as_map (each::0.0));
+		string halotarget;
 		
 		mode pref <- halo ? mod_potential.keys with_max_of mod_potential[each] : nil;
 		
+		write "\n";
 		loop m over:mode {
 			
 			//-------//
@@ -139,41 +179,57 @@ species household schedules:[] {
 			// because around 5/6 in criteria pref & around the same for each mode
 			// which is close to 0 in [-1,1] evaluation of criterias
 			
-//			write "\n";
-//			write m.name;
+			//write m.name+" > "+sample(accessibility[m]);
 			
-			// EVALUATION
-			map<string,float> critxmod <- CRITERIAS as_map (each::0.0);
+			// CRITERIAS x PREF :: [-1;1]
+			map<string,float> modxcrit <- CRITERIAS as_map (each::mod_x_pref(m,each));
 			
-			// CRITERIAS x PREF :: [0;2]
-			map<string,float> modxcrit <- CRITERIAS as_map (each::mod_x_pref(m,each,o));
+			modecritval[m][TIME] <- _time_eval(m,trip[DISTANCE]*#km,accessibility[m],modxcrit[TIME]);
+			//write TIME+"|"+prio_criterias[TIME]+" = "+modecritval[m][TIME];
 			
-			critxmod[TIME] <- _time_eval(m,trip[DISTANCE]*#km,accessibility[m],modxcrit[TIME]);
-			// write TIME+"|"+prio_criterias[TIME]+" = "+critxmod[TIME];
-			critxmod[PRICE] <- _price_eval(m,o,modxcrit[PRICE]);
-			write PRICE+"|"+prio_criterias[PRICE]+" = "+critxmod[PRICE]; 
-			critxmod[ECOLO] <- modxcrit[ECOLO];
-			// write ECOLO+"|"+prio_criterias[ECOLO]+" = "+critxmod[ECOLO];
-			critxmod[CONFORT] <- modxcrit[CONFORT] * accessibility[m];
-			// write CONFORT+"|"+prio_criterias[CONFORT]+" = "+critxmod[CONFORT];
-			critxmod[SAFE] <- modxcrit[SAFE];
-			// write SAFE+"|"+prio_criterias[SAFE]+" = "+critxmod[SAFE];
-			critxmod[EASY] <- modxcrit[EASY];
-			// write EASY+"|"+prio_criterias[EASY]+" = "+critxmod[EASY];
+			modecritval[m][PRICE] <- _price_eval(m,o,modxcrit[PRICE]);
+			//write PRICE+"|"+prio_criterias[PRICE]+" = "+modecritval[m][PRICE]; 
+			
+			// TODO : add impact of public communication
+			modecritval[m][ECOLO] <- modxcrit[ECOLO];
+			//write ECOLO+"|"+prio_criterias[ECOLO]+" "+m.name+"|"+m.criterias[ECOLO]+" = "+modecritval[m][ECOLO];
+			
+			modecritval[m][CONFORT] <- (modxcrit[CONFORT] + modxcrit[CONFORT] < 0 ? accessibility[m]-1 : accessibility[m]) / 2;
+			// write CONFORT+"|"+prio_criterias[CONFORT]+" "+m.name+"|"+m.criterias[CONFORT] +" x "+accessibility[m]+" = "+modecritval[m][CONFORT];
+			
+			modecritval[m][SAFE] <- _secure_eval(m,accessibility[m],modxcrit[SAFE]);
+			// write SAFE+"|"+prio_criterias[SAFE]+" "+m.name+"|"+m.criterias[SAFE] +" = "+modecritval[m][SAFE];
+			
+			// TODO : modify how accessibility modify evaluation
+			modecritval[m][EASY] <- modxcrit[EASY] /* (m!=CAR ? accessibility[m] : 1)*/;
+			// write EASY+"|"+prio_criterias[EASY]+" "+m.name+"|"+m.criterias[EASY] +(m!=CAR ? " x "+accessibility[m] : "")+" = "+modecritval[m][EASY];
 			
 			// =========
 			// HALO BIAS
 			if m=pref { 
-				string halotarget <- critxmod.keys with_min_of critxmod[each];
-				critxmod[halotarget] <- 1.0; // because it is a cumulative decision
+				halotarget <- CRITERIAS with_min_of modecritval[m][each];
+				// critxmod[halotarget] <- 1.0; // because it is a cumulative decision
 			}
 			
-			// AGGREGATION
-			criteval[m] <- sum(critxmod.values);
-			
-			/* REPORT */ loop c over:CRITERIAS { __criterias[c][m] <- __criterias[c][m] + critxmod[c]; }
+			/* REPORT */ loop c over:CRITERIAS { __criterias[c][m] <- __criterias[c][m] + modecritval[m][c]; }
 			
 		}
+		
+		// write "PREF["+int(self)+"] = "+pref.name+" halo bias = "+halotarget;
+		
+		map<mode,float> criteval <- [];
+		loop m over:mode { 
+			list<string> critlist <- CRITERIAS-halotarget;
+			// TODO : decide if the aggregation of mode criterias evaluation should be made as a sum, mean or else ?
+			switch COG_EVAL_AGGREGATION {
+				match SUM {criteval[m] <- sum(critlist collect (modecritval[m][each]));}
+				match MEAN {criteval[m] <- mean(critlist collect (modecritval[m][each]));}
+				match MEDIAN {criteval[m] <- median(critlist collect (modecritval[m][each]));}
+				default {error COG_EVAL_AGGREGATION+" should be implemented";}
+			}
+		}
+		
+		write "\t=> "+mode collect (each.name+":"+criteval[each]) ;
 		
 		res <- mode as_map (each::res[each] + criteval[each]);
 		// if res.values one_matches (each < 0) {error "negative pref regarding contextual criteria";}
@@ -195,7 +251,7 @@ species household schedules:[] {
 	 * How household evaluates time criteria to choose a mode
 	 */
 	float _time_eval(mode m, float distance, float accessibility, float preference) {
-		return dist_to_decision(m, distance) + accessibility / 2 * (preference+1);
+		return (dist_to_decision(m, distance) + accessibility) / 2 * (preference+1);
 	}
 	
 	/*
@@ -203,7 +259,22 @@ species household schedules:[] {
 	 */
 	float _price_eval(mode m, district o, float preference) {
 		return (preference+1) / o.c.mayor.price_factor(m) * 
-			(1 - MOBCOST[INCOME_LEVEL index_of incomes , int(m)]/budget);
+			(1 - MOBCOST[INCOME_LEVEL index_of incomes , int(m)]/budget) / 4;
+	}
+	
+	/*
+	 * How secure a mode is ! (CAR in general, BIKE relative to accessibility, PT relative to confort policy) 
+	 */
+	float _secure_eval(mode m, float accessibility, float preference, float boost <- 1.0) {
+		switch m {
+			match CAR { return preference; }
+			match BIKE { return (2 * preference + preference < 0 ? accessibility-1 : accessibility) / 3; }
+			match PUBLICTRANSPORT {
+				float ptc <- first(mayor).__city_modes_policy[PUBLICTRANSPORT][CONFORT]; 
+				return min(1, preference * preference < 0 ? 1/ptc : ptc);
+			}
+			default {error m.name+" should be implemented in household._secure_eval()";}
+		}
 	}
 	
 	// Based on data gives a score for a mode on a given distance
@@ -236,11 +307,15 @@ species household schedules:[] {
 	// MODE CRITERIA SCORE x PREFERENCES
 	
 	list<int> pref_to_argth <- [100,40,20,7,4,2.5,1.9,1.5,1.2,1];
-	// basically an activation function, as an argth(x)_w
-	float mod_x_pref(mode m, string criteria, district livingplace) {
+	
+	/**
+	 * basically an activation function, as an argth(x)_w \p
+	 * returns [-1,1]
+	 */ 
+	float mod_x_pref(mode m, string criteria) {
 		float eval <- m.criterias[criteria];
 		// Impact of policy on mode score
-		float policy <- livingplace.c.mayor.__city_modes_policy[m][criteria];
+		float policy <- first(mayor).__city_modes_policy[m][criteria];
 		eval <- min(CRITERIA_MAXEVAL,max(CRITERIA_MINEVAL,eval*policy));
 		
 		int midv <- round(CRITERIA_MAXEVAL/2);
@@ -329,11 +404,15 @@ species household schedules:[] {
 		// GOTO CAR
 		float carhabits <- mean(trip_habits[CAR]); // habits
 		float carestriction <- d.c.mayor.__restricted_cars[incomes]; // restriction
-		// TODO : unsatisfaction
+		
+		// CARESTRICTION
 		if  carestriction > 0 and flip(1-carhabits) {
+			__mobemotion <- (__mobemotion+carhabits)/2; // Add to unsatisfaction
 			float newpotential <- mod_potential[CAR] * MODE_POTENTIAL_INERTIA + (mod_potential[CAR]-carestriction) * (1-MODE_POTENTIAL_INERTIA);
 			mod_potential[CAR] <- (1-localpotential) * mod_potential[CAR] + newpotential * localpotential;  
 		}
+		
+		// TODO : go for EV should be biased by household wealth
 		if d.c.mayor.__ev_subsidies > 0.0 and mod_potential[CAR] < carhabits {
 			float newpotential <- mod_potential[CAR] * MODE_POTENTIAL_INERTIA + carhabits * (1-MODE_POTENTIAL_INERTIA);
 			// Ask for the subsidies
@@ -341,6 +420,7 @@ species household schedules:[] {
 			// Apply new potential
 			mod_potential[CAR] <- (1-localpotential) * mod_potential[CAR] + newpotential * localpotential;
 		}
+		
 		// GOTO BIKE
 		float bikehabits <- mean(trip_habits[BIKE]);
 		if d.c.mayor.__bike_subsidies > 0.0 and mod_potential[BIKE] < bikehabits { 
@@ -350,6 +430,7 @@ species household schedules:[] {
 			// Apply new potential
 			mod_potential[BIKE] <- (1-localpotential) * mod_potential[BIKE] + newpotential * localpotential;  
 		}
+		
 		// TODO : GOTO PT = Safety ???
 	}
 	
@@ -358,6 +439,33 @@ species household schedules:[] {
 	 */
 	bool reevaluate_mobility_behavior(float ceiling <- MOBILITY_BEHAVIOR_INERTIA) { 
 		return flip(1-(MOBILITY_BEHAVIOR_INERTIA+max(trip_habits collect mean(each)))/2);
+	}
+	
+	// ------------
+	// SATISFACTION
+	
+	// sum of above average amount (>5) divided by the sum of below average amount (<5)
+	float satlevel { return sum(happy_n_mobility copy_between (5,9)) / sum(happy_n_mobility copy_between (0,4)); }
+	
+	// sum of difference between actual and global satisfaction
+	float satrelativ { return sum(range(length(HAPPYDIST)-1) collect (happy_n_mobility[each]-HAPPYDIST[each])); }
+	
+	// ---------------------
+	// NORMS & SOCIAL DETERMINANTS
+	
+	/*
+	 * Return the hamming distance between current household and given household types
+	 */
+	float hamming_dist(household other) {
+		float res;
+		res <- householder = other.householder ? 1 : 0;
+		res <- res + (number_of_child = other.number_of_child ? 1 : 0);
+		res <- res + (incomes = other.incomes ? 1 : 0);
+		res <- res + CRITERIAS count (
+			prio_criterias[each] >= other.prio_criterias[each]-1 and
+			prio_criterias[each] <= other.prio_criterias[each]+1
+		)/length(CRITERIAS);
+		return res / 4;
 	}
 	
 	// ---------------------
