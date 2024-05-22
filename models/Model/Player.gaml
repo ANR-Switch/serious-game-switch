@@ -33,8 +33,6 @@ global {
 	 */
 	pair<float,float> political_score {
 		
-		// TODO : include satisfaction level
-		
 		// Based on modes policy compare to household preferences 
 		float splus;
 		float smoins;
@@ -48,18 +46,19 @@ global {
 				loop c over:m.criterias.keys {
 					// WEIGHT OF CARACTERISTICS
 					float critweight <- prio_criterias[c]/sum(prio_criterias.values);
-					// TODO : value around 0.0 means no one will adhere, which is a problem
+					// Sum to 1
+					float r <- (critweight+mw)/2;
 					if (mp[c] < 0 and mm.__city_modes_policy[m][c] < 1.0) or 
 						(mp[c] > 0 and mm.__city_modes_policy[m][c] > 1.0) { 
-						score <- score.key + critweight*mw::score.value;
+						score <- (score.key + r)::score.value;
 					} else if (mp[c] < 0 and mm.__city_modes_policy[m][c] > 1.0) or 
 						(mp[c] > 0 and mm.__city_modes_policy[m][c] < 1.0){
-						score <- score.key::score.value + critweight*mw;
+						score <- score.key::(score.value + r);
 					}
 				}
 			}
-			splus <- splus + score.key * __weight/100;
-			smoins <- smoins + score.value * __weight/100;
+			splus <- splus + score.key * __weight/100 * satlevel();
+			smoins <- smoins + (score.value * __weight/100) / satlevel();
 		}
 		
 		return splus::smoins;
@@ -95,8 +94,13 @@ species mayor {
 	
 	// CITY MODES POLICY
 	map<mode,map<string,float>> __city_modes_policy; // TODO : init based on households preferences
+	
+	// Car restriction policies
+	int lowemitionzone <- 4;
 	map<string,float> __restricted_cars <- INCOME_LEVEL as_map (each::0.0);
-	float __pt_boost <- 1.0;
+	
+	// Public transport overall quality
+	float __pt_boost <- 1.0; 
 	
 	// **************
 	// PLAYER ACTIONS
@@ -109,6 +113,8 @@ species mayor {
 			m::mheu,c::mycity,amount::amount,
 			target::o=nil or d=nil ? PUBLICWORK_NOTARGET : {int(o),int(d)}
 		];
+		
+		// TODO : monitor city mode policy toward household, i.e. __city_mode_policy[mheu][?]
 		
 		return last(infrapw);
 	}
@@ -123,19 +129,30 @@ species mayor {
 			m::CAR,c::mycity,target::{int(d),-1},evol::amount
 		];
 		
+		// TODO : monitor city mode policy toward household, i.e. __city_mode_policy[CAR][?]
+		
 		return last(carparkpw); 
 	}
 	
 	// Reduce speed limit, i.e. add a multiplicative factor lower than 1 to the criteria TIME on CAR
 	action lowerspeedlimit(int speedlimit) {
-		__city_modes_policy[CAR][TIME] <- SPEED_FACTOR * speedlimit/BASE_SPEED_LIMIT + (1-SPEED_FACTOR); // équivaut au fait de passer de 50 à 40 TODO : explicit?
+		
+		// équivaut au fait de passer de 50 à 40 TODO : explicit?
+		__city_modes_policy[CAR][TIME] <- __city_modes_policy[CAR][TIME] * speedlimit/BASE_SPEED_LIMIT; 
 		// TODO : put a price on it !!!
+		
 		mycity._CAROAD <- mycity._CAROAD collect (max(0,min(1,each * __city_modes_policy[CAR][TIME]))) as_matrix {length(district),length(district)};  
 	}
 	
 	// Based on the strenght of car habits, households may (probabilistic) or may not switch toward other modes
-	action forbidoldcar(int critair <- 2) {
-		float level <- critair<=2?ZFE_CRIT2:ZFE_CRIT3;
+	action forbidoldcar(int critair) {
+		if critair < 0 { critair <- 0; } if critair > 4 { critair <- 4; }
+		lowemitionzone <- critair;
+		float level <- sum(CRITS copy_between (0,lowemitionzone));
+		
+		__city_modes_policy[CAR][PRICE] <- min(10,max(1,__city_modes_policy[CAR][PRICE] - __city_modes_policy[CAR][PRICE] * level));
+		__city_modes_policy[CAR][ECOLO] <- min(10,max(1,__city_modes_policy[CAR][PRICE] + __city_modes_policy[CAR][PRICE] * level / CAR.criterias[ECOLO]));
+		
 		loop income over:INCOME_LEVEL { __restricted_cars[income] <- (level + ZFE_X_ECONOMY[income])/2; }
 	}
 	
@@ -151,26 +168,36 @@ species mayor {
 	}
 	
 	// Household that are willing to buy new modes using subsidies
+	// WARNING : trigger each time a household habits switch toward concerned mode
 	action allow_subsidies_to(household hh, district d, mode m, float diff) {
+		float amount <- d.pop[hh]/mycity.total_population() * diff;
+		if amount < 0 {error "Should not trigger subsidies when people mode shift is negative "+m+" = "+diff;}
 		switch m {
-			match BIKE {
-				if __bike_subsidies > 0 and diff > 0 { 
-					__accorded_bike_subsidies <- __accorded_bike_subsidies + d.pop[hh]/mycity.total_population() * diff;
+			match BIKE { 
+				if __bike_subsidies > 0 { 
+					__accorded_bike_subsidies <- __accorded_bike_subsidies + amount;
+					__city_modes_policy[BIKE][PRICE] <- __city_modes_policy[BIKE][PRICE] + __city_modes_policy[BIKE][PRICE] * amount / length(household); 
 				}
 			}
-			match CAR {
-				if __ev_subsidies > 0 and diff > 0 {
-					__accorded_ev_subsidies <- __accorded_ev_subsidies + d.pop[hh]/mycity.total_population() * diff;
+			match CAR { 
+				if __ev_subsidies > 0 { 
+					__accorded_ev_subsidies <- __accorded_ev_subsidies + amount;
+					__city_modes_policy[CAR][PRICE] <- __city_modes_policy[CAR][PRICE] + __city_modes_policy[CAR][PRICE] * amount / length(household);
 				}
 			}
 		}
+		
 	}
 	
-	action promote_criteria(string crit, float amount) {
+	/*
+	 * Action that directly goes up/down on "objective" criteria of modes 
+	 */
+	action promote_criteria(mode m, string crit, float amount) {
 		if not (CRITERIAS contains crit) {
 			error crit+" should be one among "+CRITERIAS;
 		}
-		
+		ask mode { criterias[crit] <- min(10,max(1,criterias[crit] + criterias[crit]*amount)); }
+		__city_modes_policy[m][crit] <- __city_modes_policy[m][crit] + __city_modes_policy[m][crit]*amount; 
 	}
 	
 	// *************
