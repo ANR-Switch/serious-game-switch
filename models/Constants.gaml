@@ -55,10 +55,16 @@ global {
 	string ECOLO <- "ECOLOGIQUE";
 	string PRICE <- "ECONOMIQUE";
 	string CONFORT <- "CONFORTABLE";
-	string SAFE <- "FIABLE";
+	string SAFE <- "SECURE"; // Securité ? a quel point c'est dangereux
+	string RELIABLE <- "FIABLE"; //TODO : mettre en ligne
 	string EASY <- "FACILE";
 	string TIME <- "RAPIDE";
 	list<string> CRITERIAS <- [TIME, PRICE, ECOLO, CONFORT, SAFE, EASY];
+	
+	// EVALUATION AGGREGATION CRITERIAS
+	string SUM <- "SUM";
+	string MEAN <- "MEAN";
+	string MEDIAN <- "MEDIAN";
 	
 	// MOBILITY COSTS
 	string PURCHASE <- "vehicle purchase";

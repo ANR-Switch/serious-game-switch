@@ -12,7 +12,6 @@ import "Constants.gaml"
 import "Parameters.gaml"
 
 import "Model/Modes.gaml"
-import "Model/Pop.gaml"
 import "Model/City.gaml"
 import "Model/Player.gaml"
 
@@ -256,7 +255,9 @@ species switchBuilder {
 	 */
 	mayor INIT_MAYOR(city c) { 
 		create mayor with:[mycity::c] {
-			loop m over:mode { __city_modes_policy[m] <- CRITERIAS as_map (each::1.0); } // TODO : may be not initial 1.0 for every mode and criterias
+			__city_modes_policy[BIKE] <- CRITERIAS as_map (each::1.0);
+			__city_modes_policy[PUBLICTRANSPORT] <- CRITERIAS as_map (each::1.0);
+			__city_modes_policy[CAR] <- CRITERIAS as_map (each::1.0);
 		} 
 		ask c {self.mayor <- first(mayor);}
 		return c.mayor; 

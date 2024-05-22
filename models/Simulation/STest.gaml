@@ -16,13 +16,15 @@ global {
 	// SCORING
 	
 	float CPS_POS; 
-	float CPS_NEG; 
+	float CPS_NEG;
+	float SAT_POP; 
 	
 	// PARAMETERS
 	
 	// CogBias
 	bool HL <- BHALO; // halo
 	float HBT <- BHABIT; // habits 
+	float SN <- BNORM; // social norm
 	
 	// taxes
 	float FT;
@@ -38,6 +40,8 @@ global {
 	float EVA;
 	// Speed limit
 	int SL;
+	// Old car exclusion
+	int ZFE;
 	
 	// Public transport services
 	float PTC;
@@ -53,12 +57,14 @@ global {
 			__bike_subsidies <- BS ? BSA : 0.0;
 			__ev_subsidies <- EV ? EVA : 0.0;
 			if SL!=BASE_SPEED_LIMIT {do lowerspeedlimit(SL); BASE_SPEED_LIMIT <- SL;}
+			if ZFE!=lowemitionzone {do forbidoldcar(ZFE);}
 			do increasePTatractivness(PTC,PTF);
 		}
 		pair<float,float> score <- political_score();
 		CPS_POS <- score.key; CPS_NEG <- score.value;
+		SAT_POP <- mean(household collect (each.satlevel())); 
 		// COGBIAS
-		ask household { habit <- HBT; halo <- HL; }
+		ask household { habit <- HBT; halo <- HL; norm <- SN;}
 	}
 	
 	// INFRASTRUCTURE ACTIONS
@@ -153,6 +159,7 @@ experiment TEST type:gui {
 	// ----------------
 	// NON STRUCTURED POLICY
 	parameter "Speed limit" var:SL category:"Public support actions" min:20 max:70 init:50 step:10;
+	parameter "Old car exclusion" var:ZFE category:"Public support actions" min:1 max:4 init:4;
 	
 	// ----------------
 	// PUBLIC TRANSPORT SERVICES
@@ -217,10 +224,10 @@ experiment TEST type:gui {
 	// ====================
 	// COGNITIVE BIAS & PSY
 	
-	parameter "halo bias" var:HL category:"Cognitive bias";
-	parameter "strength of habits" var:HBT category:"Cognitive bias";
-	
-	
+	parameter "Halo bias" var:HL category:"Cognitive bias";
+	parameter "Strength of habits" var:HBT category:"Cognitive bias" min:1 max:5;
+	parameter "Strength of norm" var:SN category:"Cognitive bias" min:1 max:5;
+	parameter "Aggregation style" var:COG_EVAL_AGGREGATION category:"Cognitive bias";
 	
 	// ============================================== //
 	// ============================================== //
@@ -229,6 +236,7 @@ experiment TEST type:gui {
 	output {
 		monitor "Citizen political support" value:CPS_POS color:blend(#grey,#green,CPS_POS);
 		monitor "Citizen political reject" value:CPS_NEG color:blend(#grey,#red,CPS_NEG);
+		monitor "Citizen satisfaction" value:SAT_POP color:blend(#red,#green,SAT_POP);
 		display main {
 			graphics connections {
 				loop e over:thecity.access.edges {
@@ -241,22 +249,25 @@ experiment TEST type:gui {
 			}
 		}
 		display choices type: 2d {
-			chart "household mode choice determinants" type: radar x_serie_labels: ["Habits","Potential"]+CRITERIAS 
+			chart "household mode choice determinants" type: radar x_serie_labels: ["Habits","Norm","Potential"]+CRITERIAS 
 			series_label_position: xaxis position: {0,0} size: {0.5,0.5} {
 				data "Car" value:[
 					mean(household collect (each.__habits[CAR]/each.__mode_scores_incr)),
+					mean(household collect (each.__norms[CAR]/each.__mode_scores_incr)),
 					mean(household collect (each.__potential[CAR]/each.__mode_scores_incr))] + 
-					CRITERIAS collect (spider_criteria[each][CAR.name])
+					CRITERIAS collect (max(0,spider_criteria[each][CAR.name]))
 					color:modcolor[CAR];
-				data "Bike" value:[
+				data "Active mode" value:[
 					mean(household collect (each.__habits[BIKE]/each.__mode_scores_incr)),
+					mean(household collect (each.__norms[BIKE]/each.__mode_scores_incr)),
 					mean(household collect (each.__potential[BIKE]/each.__mode_scores_incr))] + 
-					CRITERIAS collect (spider_criteria[each][BIKE.name])
+					CRITERIAS collect (max(0,spider_criteria[each][BIKE.name]))
 					color:modcolor[BIKE];
 				data "Public transport" value:[
 					mean(household collect (each.__habits[PUBLICTRANSPORT]/each.__mode_scores_incr)),
+					mean(household collect (each.__norms[PUBLICTRANSPORT]/each.__mode_scores_incr)),
 					mean(household collect (each.__potential[PUBLICTRANSPORT]/each.__mode_scores_incr))] +
-					CRITERIAS collect (spider_criteria[each][PUBLICTRANSPORT.name]) 
+					CRITERIAS collect (max(0,spider_criteria[each][PUBLICTRANSPORT.name])) 
 					color:modcolor[PUBLICTRANSPORT];
 			}
 			chart "household inner preferences | income" type: radar x_serie_labels: mode collect each.name series_label_position: xaxis

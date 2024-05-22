@@ -170,9 +170,13 @@ global {
 	bool BHALO <- true;
 	bool BREACT <- true;
 	
-	float BHABIT <- 5.0;
-	// PSY PARAMS : actually more rates than probabilities
+	float BNORM <- 1.0;
+	float BHABIT <- 1.0;
+	
+	// PSY
+	
 	float RATE_EVO_HABITS <- 0.01; // TODO : find a place to add habits drop off
+	string COG_EVAL_AGGREGATION <- MEAN among:[SUM,MEAN,MEDIAN];
 	
 	// **************************** //
 	//								//
@@ -185,8 +189,8 @@ global {
 	// Worst and best small to large cities in france (Paris vs Reims)
 	point car_congestion <- {26.0/103,109.0/246};
 	// Arbitrary
-	point bike_access <- {0.2,0.5};
-	point bus_access <- {0.3,0.5};
+	point bike_access <- {0.1,0.1};
+	point bus_access <- {0.4,0.6};
 	
 	// Overall mode ratio
 	// https://www.statistiques.developpement-durable.gouv.fr/edition-numerique/chiffres-cles-transports-2022/12-transport-interieur-de-voyageurs
@@ -223,12 +227,13 @@ global {
 	float infrastructure_degradation <- 0.01;
 	
 	// Modes criterias
-	// Try to have the same quantity summing the 6 dimensions for the 3 modes (30)
+	// Try to have the same quantity summing the 6 (7) dimensions for the 3 modes (30)
 	map<string,int> BIKE_CRITS <- [
 		ECOLO::10,
 		PRICE::8,
 		CONFORT::4,
 		SAFE::2,
+		RELIABLE::8,
 		EASY::4,
 		TIME::2
 	];
@@ -237,6 +242,7 @@ global {
 		PRICE::1,
 		CONFORT::9,
 		SAFE::5,
+		RELIABLE::5,
 		EASY::5,
 		TIME::9
 	];
@@ -245,14 +251,14 @@ global {
 		PRICE::6,
 		CONFORT::4,
 		SAFE::4,
+		RELIABLE::1,
 		EASY::5,
 		TIME::4
 	];
 	
 	// https://www.statistiques.developpement-durable.gouv.fr/le-parc-de-vehicules-au-1er-janvier-2022-dans-les-territoires-concernes-par-une-zone-faibles
-	// C3:21% C4:6.1% C5:1.2% NC:2.3%
-	float ZFE_CRIT2 <- 0.096;
-	float ZFE_CRIT3 <- 0.306; 
+	// Amount of cars according to Crit'Air FR2022
+	list<float> CRITS <- [0.013, 0.331, 0.352, 0.21, 0.061, 0.035]; // Last is C5 (1.2%) + Non Classés (2.3%) 
 	// https://www.ecologie.gouv.fr/sites/default/files/Théma%20-%20Les%20voitures%20des%20ménages%20modeste%20-%20%20moins%20nombreuses%20mais%20plus%20anciennes_0.pdf
 	// Qn = quantile de revenu, xx/xx = proportion crières 1 ou 2 / critères 3 et +
 	// Q1:34/66,Q3:51/49,Q5:63/37
