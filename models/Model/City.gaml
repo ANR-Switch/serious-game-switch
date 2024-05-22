@@ -42,7 +42,21 @@ species city {
 	
 	// https://www.tomtom.com/traffic-index/france-country-traffic/
 	// French cities car time travel / time travel due to congestion 
-	matrix<float> _CAROAD;
+	matrix<float> _CAROAD; 
+	// DYNAMIC CONGESTION //
+	reflex update_congestion when:flip(0.02) /* NOT SO OFTEN */ { 
+		// float t <- machine_time;
+		
+		float updt_ratio <- car_infrastructure_dimension / (sum(_MODE[CAR]) / sum(mode collect (sum(_MODE[each]))));
+		// write "\nUPDATE TRAFFIC JAM INDICATORS WITH URATIO="+updt_ratio;
+		loop o over:district { loop d over:district { 
+			/* CONGESTION UPDATE */
+			float lf <- _MODE[CAR][int(o),int(d)] / sum(_MODE[CAR]);
+			_CAROAD[int(o),int(d)] <- min(1,max(0,_CAROAD[int(o),int(d)] * (1-lf) + _CAROAD[int(o),int(d)] / updt_ratio * lf)); 
+		}}
+		
+		// write "Took "+with_precision((machine_time-t)/1000,2)+"s to update congestion";
+	}
 	
 	// ==============
 	// Infrastructure
@@ -71,18 +85,19 @@ species city {
 				}
 				match WEITHER { res[WEITHER] <- current_weither; } 
 				match CYCLING_ROADS {
-					float sumofdisturbances <- sum(publicworks collect (each._disturbances[BIKE][int(o),int(d)]));
+					float sumofdisturbances <- 1;
+					ask publicworks { sumofdisturbances <- sumofdisturbances * _disturbances[BIKE][int(o),int(d)]; } 
 					res[CYCLING_ROADS] <- _BIKEROAD[int(o),int(d)] * sumofdisturbances;
 				}
 				match PUBLIC_TRANSPORT_OFFER { 
-					float sumofdisturbances <- sum(publicworks collect (each._disturbances[PUBLICTRANSPORT][int(o),int(d)]));
-					res[PUBLIC_TRANSPORT_OFFER] <- _PUBLICTRANSPORT[int(o),int(d)];
+					float sumofdisturbances <- 1;
+					ask publicworks { sumofdisturbances <- sumofdisturbances * _disturbances[PUBLICTRANSPORT][int(o),int(d)]; }
+					res[PUBLIC_TRANSPORT_OFFER] <- _PUBLICTRANSPORT[int(o),int(d)] * sumofdisturbances;
 				}
 				match TRAFIC_JAM {
-					float sumofdisturbances <- sum(publicworks collect (each._disturbances[CAR][int(o),int(d)]));
-					// TODO : a valider
-					float infra_x_usage <- sum(_MODE[CAR])=0 ? 1 : sum(_MODE[CAR])/sum(_MODE.values collect (sum(each))); 
-					res[TRAFIC_JAM] <- _CAROAD[int(o),int(d)] * infra_x_usage * sumofdisturbances;
+					float sumofdisturbances <- 1;
+					ask publicworks { sumofdisturbances <- sumofdisturbances * _disturbances[CAR][int(o),int(d)]; } 
+					res[TRAFIC_JAM] <- _CAROAD[int(o),int(d)] * sumofdisturbances;
 				}
 			}
 		}
@@ -220,6 +235,7 @@ species district {
 	 * 
 	 */
 	map<mode,list<int>> __HOUSEHOLD_OD_MATRIX(string purpose <- WORK, map<household,bool> hld <- []) {
+		
 		map<mode,list<float>> res <- map([]);
 		// add matrices for each mode
 		loop m over:mode {
