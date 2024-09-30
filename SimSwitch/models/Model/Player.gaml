@@ -89,9 +89,6 @@ species mayor {
 	float __ev_subsidies <- 0.0 min:0.0 max:1.0;
 	float __accorded_ev_subsidies;
 	
-	// INVESTMENT
-	float __invest;
-	
 	// CITY MODES POLICY
 	map<mode,map<string,float>> __city_modes_policy; // TODO : init based on households preferences
 	
@@ -224,6 +221,7 @@ species mayor {
 		// write "CARS IN: "+__car_input;
 		// write "PT IN: "+__pt_input;
 		// write "LOCAL TAXE IN: "+__local_tax;
+		float __invest;
 		
 		// SUBSIDIES
 		// Pay over a year subsidies when household switch toward more bike in mobility

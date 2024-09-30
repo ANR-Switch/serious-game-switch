@@ -18,7 +18,7 @@ import "Model/Player.gaml"
 global {
 	
 	date starting_date <- #now; 
-	float step <- 6#h;
+	float step <- 1#day;//6#h;
 	
 	city thecity;
 	

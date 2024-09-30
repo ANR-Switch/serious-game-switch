@@ -229,7 +229,7 @@ species household schedules:[] {
 			}
 		}
 		
-		write "\t=> "+mode collect (each.name+":"+criteval[each]) ;
+		// write "\t=> "+mode collect (each.name+":"+criteval[each]) ;
 		
 		res <- mode as_map (each::res[each] + criteval[each]);
 		// if res.values one_matches (each < 0) {error "negative pref regarding contextual criteria";}
